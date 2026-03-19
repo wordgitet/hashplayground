@@ -466,7 +466,7 @@ make("TextLabel", {
 	BackgroundTransparency = 1,
 	Font = Enum.Font.GothamSemibold,
 	Size = UDim2.new(1, 0, 0, 26),
-	Text = "Hash Playground",
+	Text = "Checksum Playground",
 	TextColor3 = palette.text,
 	TextSize = 20,
 	TextXAlignment = Enum.TextXAlignment.Left,
@@ -1106,4 +1106,4 @@ end)
 sync_shell()
 clear_output("Ready", palette.success)
 
-print("Hash Playground UI ready")
+print("Checksum Playground UI ready")
