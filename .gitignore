@@ -1,0 +1,18 @@
+# Rojo / local tooling
+*.rbxl
+*.rbxl.lock
+*.rbxlx.lock
+*.project.json.user
+*.sourcemap.json
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs / temp
+*.log
+tmp/
+temp/
+
