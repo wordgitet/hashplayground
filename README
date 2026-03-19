@@ -1,0 +1,79 @@
+Hash Playground
+===============
+
+OVERVIEW
+========
+Hash Playground is an open-source Roblox project for experimenting with
+hashes, checksums, and key derivation.
+
+It started as a Roblox "game" and ended up closer to a desktop-style
+utility app. The project is built with Luau and uses a GTK-inspired
+interface for testing multiple algorithms in one place.
+
+FEATURES
+========
+- MD5
+- SHA-1
+- SHA-256
+- SHA-512
+- BLAKE2b
+- BLAKE3
+- CRC-8
+- CRC-16
+- CRC-24
+- CRC-32
+- PBKDF2 with SHA-256 and SHA-512
+- Custom and native backend support where available
+- Full-screen utility-style interface built in code
+
+PROJECT LAYOUT
+==============
+The project uses Rojo for source control and Studio sync.
+
+- src/client/HashGUI.client.lua
+  Main user interface and interaction logic
+
+- src/shared/*.lua
+  Hash, checksum, HMAC, and PBKDF2 modules
+
+- default.project.json
+  Rojo project mapping
+
+DEVELOPMENT
+===========
+To work on the project locally:
+
+  rojo serve
+
+Then connect to the Rojo plugin in Roblox Studio and sync the project.
+
+NOTES
+=====
+This project is mainly intended for testing, learning, and experimentation.
+
+It is not meant to be a security product, password manager, or production
+cryptography toolkit. It is a playground for exploring how these algorithms
+behave inside Roblox and Luau.
+
+F.A.Q.
+======
+Q: Is this a game?
+A: Technically yes. Spiritually, it is a cryptographic utility wearing a
+   Roblox nametag.
+
+Q: Why does a Roblox project have this many hash functions?
+A: It got out of hand in a very specific and enjoyable direction.
+
+Q: Why are there both custom and native backends?
+A: Because writing the algorithms was fun, and comparing them is even better.
+
+Q: Why PBKDF2?
+A: Because once hashes and HMAC showed up, key derivation was only a matter
+   of time.
+
+LICENSE
+=======
+Unless otherwise noted, project files are made available under the
+Mozilla Public License 2.0. See the LICENSE file for the full license text.
+
+See THIRD_PARTY_NOTICES for notes about adapted or reference-derived code.

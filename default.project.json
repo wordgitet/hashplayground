@@ -1,0 +1,19 @@
+{
+  "name": "HashPlayground",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "$path": "src/shared"
+    },
+    "StarterGui": {
+      "$className": "StarterGui",
+      "HashGUI": {
+        "$className": "ScreenGui",
+        "GuiScript": {
+          "$path": "src/client/HashGUI.client.lua"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,54 @@
+Third-Party Notices
+===================
+
+Hash Playground combines original Luau code with a few ports and adaptations
+of public reference implementations for cryptographic algorithms.
+
+Top-level repository license
+============================
+Unless otherwise noted, original project files are made available under the
+Mozilla Public License 2.0. See LICENSE for the full text.
+
+Per-file notes
+==============
+Original project files
+- src/client/HashGUI.client.lua
+- src/shared/CRCModule.lua
+- src/shared/HMACModule.lua
+- src/shared/SHA1Module.lua
+
+Adapted or ported files
+- src/shared/MD5Module.lua
+  Ported from Zunawe/md5-c.
+  Upstream license: Unlicense.
+  This file is additionally made available under MPL-2.0 in this repository.
+
+- src/shared/SHA256Module.lua
+  Ported from the Brad Conte crypto-algorithms implementation.
+  Upstream project README describes that code as public domain.
+
+- src/shared/SHA512Module.lua
+  Ported from the OpenSSL SHA-512 implementation.
+  Upstream license: Apache License 2.0.
+
+- src/shared/PBKDF2Module.lua
+  Ported from the OpenSSL PBKDF2 implementation.
+  Upstream license: Apache License 2.0.
+
+- src/shared/BLAKE2bModule.lua
+  Based on the BLAKE2 reference implementation family.
+  The upstream reference package offers Apache 2.0 among its license options,
+  which is the license chosen for this port.
+
+- src/shared/BLAKE3Module.lua
+  Based on the official BLAKE3 reference implementation family.
+  The upstream project offers Apache 2.0 among its license options,
+  which is the license chosen for this port.
+
+Reference sources
+=================
+- Zunawe/md5-c
+- B-Con crypto-algorithms
+- OpenSSL
+- BLAKE2 reference implementation package
+- BLAKE3 official reference implementation
