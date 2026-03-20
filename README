@@ -10,6 +10,10 @@ It started as a Roblox "game" and ended up closer to a desktop-style
 utility app. The project is built with Luau and uses a GTK-inspired
 interface for testing multiple algorithms in one place.
 
+It is also, against all reasonable expectations, a place where Roblox can
+help you poke at legacy SCO licensing math. Sometimes software takes the
+scenic route.
+
 FEATURES
 ========
 - MD5
@@ -23,6 +27,7 @@ FEATURES
 - CRC-24
 - CRC-32
 - PBKDF2 with SHA-256 and SHA-512
+- SCO serial, activation, license, and registration key helpers
 - Custom and native backend support where available
 - Full-screen utility-style interface built in code
 
@@ -70,6 +75,13 @@ A: Because writing the algorithms was fun, and comparing them is even better.
 Q: Why PBKDF2?
 A: Because once hashes and HMAC showed up, key derivation was only a matter
    of time.
+
+Q: Why does it also know about SCO serial numbers now?
+A: Because apparently the line between "hash playground" and "retro software
+   archaeology lab" was thinner than expected.
+
+Q: Is that a normal thing for a Roblox project to do?
+A: Absolutely not. That is part of the charm.
 
 LICENSE
 =======

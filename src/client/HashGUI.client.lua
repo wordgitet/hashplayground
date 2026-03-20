@@ -26,6 +26,7 @@ local blake2b_module = require_module("BLAKE2bModule")
 local blake3_module = require_module("BLAKE3Module")
 local crc_module = require_module("CRCModule")
 local pbkdf2_module = require_module("PBKDF2Module")
+local sco_keygen_module = require_module("SCOKeygenModule")
 
 local hash_suite = {
 	md5 = md5_module.hash or md5_module.md5,
@@ -131,11 +132,20 @@ local workspace_title
 local workspace_subtitle
 local hash_workspace
 local pbkdf2_workspace
+local sco_snak_workspace
+local sco_reg_workspace
 local hash_input_box
 local pbkdf2_password_box
 local pbkdf2_salt_box
 local pbkdf2_iterations_box
 local pbkdf2_length_box
+local sco_product_id_box
+local sco_major_box
+local sco_minor_box
+local sco_license_box
+local sco_reg_serial_box
+local sco_host_id_box
+local sco_reglock_box
 local result_title
 local result_meta_label
 local result_box
@@ -188,6 +198,20 @@ end
 
 local function get_backend_label(backend_key)
 	return backend_labels[backend_key] or string.upper(backend_key)
+end
+
+local function get_text_value(text_box, fallback)
+	if text_box and text_box.Text ~= "" then
+		return text_box.Text
+	end
+	return fallback or ""
+end
+
+local function get_sco_version_summary()
+	local product_id = get_text_value(sco_product_id_box, "?")
+	local major = get_text_value(sco_major_box, "?")
+	local minor = get_text_value(sco_minor_box, "?")
+	return "Product " .. product_id .. "  |  Version " .. major .. "." .. minor
 end
 
 local function is_native_backend_supported(algorithm_key)
@@ -476,7 +500,7 @@ make("TextLabel", {
 	Font = Enum.Font.GothamMedium,
 	Position = UDim2.new(0, 0, 0, 28),
 	Size = UDim2.new(1, 0, 0, 28),
-	Text = "GTK-style utility shell for hashes and key derivation",
+	Text = "GTK-style utility shell for hashes, key derivation, and SCO licensing tools",
 	TextColor3 = palette.subtle,
 	TextSize = 11,
 	TextWrapped = true,
@@ -485,7 +509,7 @@ make("TextLabel", {
 }, sidebar_header)
 create_divider(sidebar_inner, 2)
 
-local mode_section = create_section_frame(sidebar_inner, 3, 92)
+local mode_section = create_section_frame(sidebar_inner, 3, 168)
 create_section_label(mode_section, "Mode")
 local mode_rows_holder = make("Frame", {
 	BackgroundTransparency = 1,
@@ -496,13 +520,19 @@ make("UIListLayout", {
 	Padding = UDim.new(0, 4),
 	SortOrder = Enum.SortOrder.LayoutOrder,
 }, mode_rows_holder)
-for index, mode_key in ipairs({"hash", "pbkdf2"}) do
-	local row = create_row_button(mode_rows_holder, mode_key == "hash" and "Hash" or "PBKDF2", index)
+for index, mode_data in ipairs({
+	{key = "hash", label = "Hash"},
+	{key = "pbkdf2", label = "PBKDF2"},
+	{key = "sco_snak", label = "SCO SNAK"},
+	{key = "sco_reg", label = "SCO Reg"},
+}) do
+	local row = create_row_button(mode_rows_holder, mode_data.label, index)
+	local mode_key = mode_data.key
 	mode_rows[mode_key] = row
 end
 create_divider(sidebar_inner, 4)
 
-sidebar_algorithm_section = create_section_frame(sidebar_inner, 5, 294)
+sidebar_algorithm_section = create_section_frame(sidebar_inner, 5, 252)
 create_section_label(sidebar_algorithm_section, "Algorithms")
 local algorithm_scroller = make("ScrollingFrame", {
 	Active = true,
@@ -576,7 +606,7 @@ make("TextLabel", {
 }, sidebar_backend_section)
 create_divider(sidebar_inner, 9)
 
-local summary_section = create_section_frame(sidebar_inner, 10, 108)
+local summary_section = create_section_frame(sidebar_inner, 10, 98)
 create_section_label(summary_section, "Current State")
 local summary_holder = make("Frame", {
 	BackgroundTransparency = 1,
@@ -724,9 +754,102 @@ local pbkdf2_generate_button = create_action_button(pbkdf2_action_row, "Derive K
 local pbkdf2_clear_button = create_action_button(pbkdf2_action_row, "Clear", false, UDim2.new(0, 110, 1, 0))
 pbkdf2_clear_button.Position = UDim2.new(0, 174, 0, 0)
 
-create_divider(workspace, 5)
+sco_snak_workspace = create_section_frame(workspace, 5, 238)
+local sco_snak_fields = make("Frame", {
+	BackgroundTransparency = 1,
+	Size = UDim2.new(1, 0, 0, 172),
+}, sco_snak_workspace)
+local sco_version_row = make("Frame", {
+	BackgroundTransparency = 1,
+	Size = UDim2.new(1, 0, 0, 78),
+}, sco_snak_fields)
+local product_field = make("Frame", {
+	BackgroundTransparency = 1,
+	Size = UDim2.new(1 / 3, -8, 1, 0),
+}, sco_version_row)
+local _, product_id_box = create_field(product_field, "Product ID", "203", false, 40, false)
+sco_product_id_box = product_id_box
+local major_field = make("Frame", {
+	BackgroundTransparency = 1,
+	Position = UDim2.new(1 / 3, 4, 0, 0),
+	Size = UDim2.new(1 / 3, -8, 1, 0),
+}, sco_version_row)
+local _, major_box = create_field(major_field, "Major", "71", false, 40, false)
+sco_major_box = major_box
+local minor_field = make("Frame", {
+	BackgroundTransparency = 1,
+	Position = UDim2.new(2 / 3, 8, 0, 0),
+	Size = UDim2.new(1 / 3, -8, 1, 0),
+}, sco_version_row)
+local _, minor_box = create_field(minor_field, "Minor", "4", false, 40, false)
+sco_minor_box = minor_box
+local license_field = make("Frame", {
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0, 0, 0, 88),
+	Size = UDim2.new(1, 0, 0, 78),
+}, sco_snak_fields)
+local _, license_box = create_field(license_field, "License data", "Optional: c4;u100", false, 40, false)
+sco_license_box = license_box
+local sco_snak_action_row = make("Frame", {
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0, 0, 1, -36),
+	Size = UDim2.new(1, 0, 0, 36),
+}, sco_snak_workspace)
+local sco_snak_generate_button = create_action_button(sco_snak_action_row, "Generate SNAK", true, UDim2.new(0, 164, 1, 0))
+local sco_snak_clear_button = create_action_button(sco_snak_action_row, "Clear", false, UDim2.new(0, 110, 1, 0))
+sco_snak_clear_button.Position = UDim2.new(0, 174, 0, 0)
 
-local result_panel = create_section_frame(workspace, 6, 210)
+sco_reg_workspace = create_section_frame(workspace, 6, 256)
+local sco_reg_fields = make("Frame", {
+	BackgroundTransparency = 1,
+	Size = UDim2.new(1, 0, 0, 190),
+}, sco_reg_workspace)
+local sco_reg_top_row = make("Frame", {
+	BackgroundTransparency = 1,
+	Size = UDim2.new(1, 0, 0, 78),
+}, sco_reg_fields)
+local reg_serial_field = make("Frame", {
+	BackgroundTransparency = 1,
+	Size = UDim2.new(0.5, -6, 1, 0),
+}, sco_reg_top_row)
+local _, reg_serial_box = create_field(reg_serial_field, "Serial number", "SCO123456", false, 40, false)
+sco_reg_serial_box = reg_serial_box
+local host_id_field = make("Frame", {
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0.5, 6, 0, 0),
+	Size = UDim2.new(0.5, -6, 1, 0),
+}, sco_reg_top_row)
+local _, host_id_box = create_field(host_id_field, "Host ID", "orxrrwjwxz", false, 40, false)
+sco_host_id_box = host_id_box
+local reglock_field = make("Frame", {
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0, 0, 0, 88),
+	Size = UDim2.new(1, 0, 0, 78),
+}, sco_reg_fields)
+local _, reglock_box = create_field(reglock_field, "Registration lock", "Optional: oSCO123456;u1234567890;m......", false, 40, false)
+sco_reglock_box = reglock_box
+make("TextLabel", {
+	BackgroundTransparency = 1,
+	Font = Enum.Font.GothamMedium,
+	Position = UDim2.new(0, 0, 0, 168),
+	Size = UDim2.new(1, 0, 0, 20),
+	Text = "Paste a reglock or provide serial number plus host ID.",
+	TextColor3 = palette.subtle,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+}, sco_reg_fields)
+local sco_reg_action_row = make("Frame", {
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0, 0, 1, -36),
+	Size = UDim2.new(1, 0, 0, 36),
+}, sco_reg_workspace)
+local sco_reg_generate_button = create_action_button(sco_reg_action_row, "Generate Key", true, UDim2.new(0, 164, 1, 0))
+local sco_reg_clear_button = create_action_button(sco_reg_action_row, "Clear", false, UDim2.new(0, 110, 1, 0))
+sco_reg_clear_button.Position = UDim2.new(0, 174, 0, 0)
+
+create_divider(workspace, 7)
+
+local result_panel = create_section_frame(workspace, 8, 210)
 result_title = make("TextLabel", {
 	BackgroundTransparency = 1,
 	Font = Enum.Font.GothamSemibold,
@@ -797,6 +920,10 @@ status_label = make("TextLabel", {
 local function get_workspace_title()
 	if current_mode == "pbkdf2" then
 		return "PBKDF2"
+	elseif current_mode == "sco_snak" then
+		return "SCO SNAK"
+	elseif current_mode == "sco_reg" then
+		return "SCO Registration"
 	end
 	return "Hash"
 end
@@ -804,6 +931,10 @@ end
 local function get_workspace_subtitle()
 	if current_mode == "pbkdf2" then
 		return "Derive a key from a password, salt, and iteration count using HMAC-based PBKDF2."
+	elseif current_mode == "sco_snak" then
+		return "Generate SCO serial numbers, activation keys, and optional license checksum fields."
+	elseif current_mode == "sco_reg" then
+		return "Generate a SCO registration key from a serial number and host ID or from a registration lock."
 	end
 	return "Generate a digest from any input string using the selected algorithm and backend."
 end
@@ -811,6 +942,10 @@ end
 local function get_output_title()
 	if current_mode == "pbkdf2" then
 		return "Derived key"
+	elseif current_mode == "sco_snak" then
+		return "Serial bundle"
+	elseif current_mode == "sco_reg" then
+		return "Registration key"
 	end
 	return "Result"
 end
@@ -819,6 +954,23 @@ local function get_result_meta()
 	if current_mode == "pbkdf2" then
 		local iterations_text = pbkdf2_iterations_box and pbkdf2_iterations_box.Text or "1000"
 		local base = "PBKDF2-HMAC-" .. get_digest_label(current_pbkdf2_digest) .. "  |  " .. iterations_text .. " iterations"
+		if current_result_value ~= "" then
+			return base .. "  |  " .. tostring(#current_result_value) .. " chars"
+		end
+		return base
+	end
+
+	if current_mode == "sco_snak" then
+		local base = "SCO SNAK  |  " .. get_sco_version_summary()
+		if current_result_value ~= "" then
+			return base .. "  |  " .. tostring(#current_result_value) .. " chars"
+		end
+		return base
+	end
+
+	if current_mode == "sco_reg" then
+		local source_label = get_text_value(sco_reglock_box, "") ~= "" and "reglock input" or "serial + host ID"
+		local base = "SCO registration  |  " .. source_label
 		if current_result_value ~= "" then
 			return base .. "  |  " .. tostring(#current_result_value) .. " chars"
 		end
@@ -855,9 +1007,23 @@ local function clear_output(status_text, status_color)
 end
 
 local function refresh_summary()
-	summary_mode_value.Text = current_mode == "pbkdf2" and "PBKDF2" or "Hash"
-	summary_target_value.Text = current_mode == "pbkdf2" and get_digest_label(current_pbkdf2_digest) or get_algorithm_label(current_algorithm)
-	summary_engine_value.Text = current_mode == "pbkdf2" and "Custom KDF" or get_backend_label(current_backend_mode)
+	if current_mode == "pbkdf2" then
+		summary_mode_value.Text = "PBKDF2"
+		summary_target_value.Text = get_digest_label(current_pbkdf2_digest)
+		summary_engine_value.Text = "Custom KDF"
+	elseif current_mode == "sco_snak" then
+		summary_mode_value.Text = "SCO SNAK"
+		summary_target_value.Text = get_sco_version_summary()
+		summary_engine_value.Text = "MD5 port"
+	elseif current_mode == "sco_reg" then
+		summary_mode_value.Text = "SCO Reg"
+		summary_target_value.Text = get_text_value(sco_reglock_box, "") ~= "" and "Registration lock" or "Serial + host ID"
+		summary_engine_value.Text = "MD5 port"
+	else
+		summary_mode_value.Text = "Hash"
+		summary_target_value.Text = get_algorithm_label(current_algorithm)
+		summary_engine_value.Text = get_backend_label(current_backend_mode)
+	end
 end
 
 local function refresh_header()
@@ -888,11 +1054,16 @@ end
 
 local function refresh_visibility()
 	local hash_mode = current_mode == "hash"
+	local pbkdf2_mode = current_mode == "pbkdf2"
+	local sco_snak_mode = current_mode == "sco_snak"
+	local sco_reg_mode = current_mode == "sco_reg"
 	hash_workspace.Visible = hash_mode
-	pbkdf2_workspace.Visible = not hash_mode
+	pbkdf2_workspace.Visible = pbkdf2_mode
+	sco_snak_workspace.Visible = sco_snak_mode
+	sco_reg_workspace.Visible = sco_reg_mode
 	sidebar_algorithm_section.Visible = hash_mode
 	sidebar_backend_section.Visible = hash_mode
-	sidebar_digest_section.Visible = not hash_mode
+	sidebar_digest_section.Visible = pbkdf2_mode
 end
 
 local function sync_shell()
@@ -904,18 +1075,36 @@ local function sync_shell()
 end
 
 local function apply_mode(mode_key)
-	if mode_key ~= "hash" and mode_key ~= "pbkdf2" then
+	if mode_key ~= "hash" and mode_key ~= "pbkdf2" and mode_key ~= "sco_snak" and mode_key ~= "sco_reg" then
 		return
 	end
 
 	current_mode = mode_key
-	clear_output(mode_key == "pbkdf2" and "PBKDF2 ready" or "Hash mode ready", palette.success)
+	local ready_text = "Hash mode ready"
+	if mode_key == "pbkdf2" then
+		ready_text = "PBKDF2 ready"
+	elseif mode_key == "sco_snak" then
+		ready_text = "SCO SNAK ready"
+	elseif mode_key == "sco_reg" then
+		ready_text = "SCO registration ready"
+	end
+	clear_output(ready_text, palette.success)
 	if current_mode == "pbkdf2" then
 		if pbkdf2_iterations_box.Text == "" then
 			pbkdf2_iterations_box.Text = "1000"
 		end
 		if pbkdf2_length_box.Text == "" then
 			pbkdf2_length_box.Text = current_pbkdf2_digest == "sha512" and "64" or "32"
+		end
+	elseif current_mode == "sco_snak" then
+		if sco_product_id_box.Text == "" then
+			sco_product_id_box.Text = "203"
+		end
+		if sco_major_box.Text == "" then
+			sco_major_box.Text = "71"
+		end
+		if sco_minor_box.Text == "" then
+			sco_minor_box.Text = "4"
 		end
 	end
 	current_result_value = ""
@@ -969,7 +1158,79 @@ local function apply_pbkdf2_digest(digest_key)
 	sync_shell()
 end
 
+local function format_sco_snak_result(result)
+	local lines = {
+		"Serial number:  " .. result.serial_number,
+		"Activation key: " .. result.activation_key,
+	}
+
+	if result.license_data then
+		lines[#lines + 1] = "License data:   " .. result.license_data
+	end
+
+	return table.concat(lines, "\n")
+end
+
+local function format_sco_reg_result(serial_number, host_id, registration_key)
+	return table.concat({
+		"Serial number:     " .. serial_number,
+		"Host ID:           " .. host_id,
+		"Registration key:  " .. registration_key,
+	}, "\n")
+end
+
 local function generate_hash()
+	if current_mode == "sco_snak" then
+		local product_id = tonumber(sco_product_id_box.Text or "")
+		local major = tonumber(sco_major_box.Text or "")
+		local minor = tonumber(sco_minor_box.Text or "")
+		local license_data = sco_license_box.Text or ""
+		local ok, result = pcall(function()
+			return sco_keygen_module.generate_snak(
+				product_id,
+				major,
+				minor,
+				license_data ~= "" and license_data or nil
+			)
+		end)
+		if not ok then
+			set_result("SCO SNAK failed: " .. tostring(result), palette.danger)
+			current_result_value = ""
+			set_status("SCO SNAK error", palette.danger)
+			result_meta_label.Text = get_result_meta()
+			return
+		end
+
+		set_result(format_sco_snak_result(result), palette.result)
+		set_status("SCO serial bundle ready", palette.success)
+		return
+	end
+
+	if current_mode == "sco_reg" then
+		local reglock = sco_reglock_box.Text or ""
+		local ok, serial_number, host_id, registration_key = pcall(function()
+			if reglock ~= "" then
+				local parsed = sco_keygen_module.parse_reglock(reglock)
+				return parsed.serial_number, parsed.host_id, sco_keygen_module.generate_registration_key(parsed.serial_number, parsed.host_id)
+			end
+
+			local serial_value = sco_reg_serial_box.Text or ""
+			local host_value = sco_host_id_box.Text or ""
+			return serial_value, host_value, sco_keygen_module.generate_registration_key(serial_value, host_value)
+		end)
+		if not ok then
+			set_result("SCO registration failed: " .. tostring(serial_number), palette.danger)
+			current_result_value = ""
+			set_status("SCO registration error", palette.danger)
+			result_meta_label.Text = get_result_meta()
+			return
+		end
+
+		set_result(format_sco_reg_result(serial_number, host_id, registration_key), palette.result)
+		set_status("Registration key ready", palette.success)
+		return
+	end
+
 	if current_mode == "pbkdf2" then
 		local password = pbkdf2_password_box.Text or ""
 		local salt = pbkdf2_salt_box.Text or ""
@@ -1037,6 +1298,15 @@ local function clear_fields()
 		pbkdf2_salt_box.Text = ""
 		pbkdf2_iterations_box.Text = "1000"
 		pbkdf2_length_box.Text = current_pbkdf2_digest == "sha512" and "64" or "32"
+	elseif current_mode == "sco_snak" then
+		sco_product_id_box.Text = "203"
+		sco_major_box.Text = "71"
+		sco_minor_box.Text = "4"
+		sco_license_box.Text = ""
+	elseif current_mode == "sco_reg" then
+		sco_reg_serial_box.Text = ""
+		sco_host_id_box.Text = ""
+		sco_reglock_box.Text = ""
 	else
 		hash_input_box.Text = ""
 	end
@@ -1072,6 +1342,10 @@ hash_generate_button.MouseButton1Click:Connect(generate_hash)
 hash_clear_button.MouseButton1Click:Connect(clear_fields)
 pbkdf2_generate_button.MouseButton1Click:Connect(generate_hash)
 pbkdf2_clear_button.MouseButton1Click:Connect(clear_fields)
+sco_snak_generate_button.MouseButton1Click:Connect(generate_hash)
+sco_snak_clear_button.MouseButton1Click:Connect(clear_fields)
+sco_reg_generate_button.MouseButton1Click:Connect(generate_hash)
+sco_reg_clear_button.MouseButton1Click:Connect(clear_fields)
 
 hash_input_box.FocusLost:Connect(function(enter_pressed)
 	if enter_pressed and current_mode == "hash" then
@@ -1099,6 +1373,48 @@ end)
 
 pbkdf2_length_box.FocusLost:Connect(function(enter_pressed)
 	if enter_pressed and current_mode == "pbkdf2" then
+		generate_hash()
+	end
+end)
+
+sco_product_id_box.FocusLost:Connect(function(enter_pressed)
+	if enter_pressed and current_mode == "sco_snak" then
+		generate_hash()
+	end
+end)
+
+sco_major_box.FocusLost:Connect(function(enter_pressed)
+	if enter_pressed and current_mode == "sco_snak" then
+		generate_hash()
+	end
+end)
+
+sco_minor_box.FocusLost:Connect(function(enter_pressed)
+	if enter_pressed and current_mode == "sco_snak" then
+		generate_hash()
+	end
+end)
+
+sco_license_box.FocusLost:Connect(function(enter_pressed)
+	if enter_pressed and current_mode == "sco_snak" then
+		generate_hash()
+	end
+end)
+
+sco_reg_serial_box.FocusLost:Connect(function(enter_pressed)
+	if enter_pressed and current_mode == "sco_reg" then
+		generate_hash()
+	end
+end)
+
+sco_host_id_box.FocusLost:Connect(function(enter_pressed)
+	if enter_pressed and current_mode == "sco_reg" then
+		generate_hash()
+	end
+end)
+
+sco_reglock_box.FocusLost:Connect(function(enter_pressed)
+	if enter_pressed and current_mode == "sco_reg" then
 		generate_hash()
 	end
 end)

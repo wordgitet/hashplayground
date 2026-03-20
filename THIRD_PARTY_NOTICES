@@ -35,6 +35,10 @@ Adapted or ported files
   Ported from the OpenSSL PBKDF2 implementation.
   Upstream license: Apache License 2.0.
 
+- src/shared/SCOKeygenModule.lua
+  Ported from the sb SCO serial utility.
+  Upstream license: MIT.
+
 - src/shared/BLAKE2bModule.lua
   Based on the BLAKE2 reference implementation family.
   The upstream reference package offers Apache 2.0 among its license options,
