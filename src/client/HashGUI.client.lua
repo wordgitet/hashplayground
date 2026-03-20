@@ -128,6 +128,7 @@ local backend_rows = {}
 local sidebar_algorithm_section
 local sidebar_digest_section
 local sidebar_backend_section
+local backend_note_label
 local workspace_title
 local workspace_subtitle
 local hash_workspace
@@ -592,7 +593,7 @@ local custom_row = create_row_button(backend_rows_holder, "Custom", 1)
 local native_row = create_row_button(backend_rows_holder, "Native", 2)
 backend_rows.custom = custom_row
 backend_rows.native = native_row
-make("TextLabel", {
+backend_note_label = make("TextLabel", {
 	BackgroundTransparency = 1,
 	Font = Enum.Font.GothamMedium,
 	Position = UDim2.new(0, 0, 0, 92),
@@ -1261,8 +1262,7 @@ local function refresh_selectors()
 	end
 
 	for backend_key, row in pairs(backend_rows) do
-		local enabled = backend_key ~= "native" or is_native_backend_supported(current_algorithm)
-		style_row(row, backend_key == current_backend_mode and enabled, enabled)
+		style_row(row, backend_key == current_backend_mode, true)
 	end
 end
 
@@ -1272,9 +1272,12 @@ local function refresh_visibility()
 	end
 
 	local config = get_current_mode_config()
+	local native_supported = is_native_backend_supported(current_algorithm)
 	sidebar_algorithm_section.Visible = config.show_algorithm_section
 	sidebar_backend_section.Visible = config.show_backend_section
 	sidebar_digest_section.Visible = config.show_digest_section
+	native_row.Visible = native_supported
+	backend_note_label.Visible = native_supported
 end
 
 local function sync_shell()
