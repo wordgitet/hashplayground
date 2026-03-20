@@ -24,6 +24,21 @@ rojo serve
 
 Then connect to the Rojo plugin in Roblox Studio and sync the project.
 
+## Release Policy
+
+- Commit whenever a change is logically complete and would make sense to
+  keep or revert on its own.
+- Push often, especially after changes have been synced into Roblox
+  Studio, so the repository stays close to the live experience state.
+- Do not create a new tag for every Roblox update or small commit.
+- Use tags only for meaningful milestones such as:
+  - a public release
+  - a notable feature addition
+  - a visible batch of polish or fixes
+  - a version that would be useful for others to download or reference
+- Treat Roblox publishing as a rolling live build and Git tags as named
+  milestones.
+
 ## Tool Selection
 
 - Prefer repository files plus Rojo for all source edits.
