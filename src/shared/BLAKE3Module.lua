@@ -5,6 +5,10 @@
 -- Ported from the official BLAKE3 reference implementation family.
 -- BLAKE3 is kept standalone because its tree hashing and XOF behavior differ a lot from the SHA modules.
 
+local byte = string.byte
+local floor = math.floor
+local concat = table.concat
+
 local IV = {
 	0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A,
 	0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19,
@@ -23,55 +27,36 @@ local MESSAGE_PERMUTATION = {
 	2, 12, 13, 6, 10, 15, 16, 9,
 }
 
+local HEX = table.create(256)
+for i = 0, 255 do
+	HEX[i] = string.format("%02x", i)
+end
+
 local function u32(value)
 	return bit32.band(value, 0xFFFFFFFF)
 end
 
-local function copy_words(words)
-	local out = table.create(#words)
-	for i = 1, #words do
+local function copy_words(words, count)
+	count = count or #words
+	local out = table.create(count)
+	for i = 1, count do
 		out[i] = words[i]
 	end
 	return out
 end
 
-local function load_bytes(message)
-	local bytes = table.create(#message)
-	for i = 1, #message do
-		bytes[i] = string.byte(message, i)
-	end
-	return bytes
-end
-
-local function load_block_bytes(bytes, start_index, block_len)
-	local block = table.create(64)
-	for i = 1, 64 do
-		if i <= block_len then
-			block[i] = bytes[start_index + i - 1] or 0
-		else
-			block[i] = 0
-		end
-	end
-	return block
-end
-
-local function load_block_words(bytes, start_index, block_len)
-	local block_words = table.create(16)
+local function fill_block_words_from_string(message, start_index, block_len, block_words)
 	local byte_index = start_index
 	for i = 1, 16 do
-		local b1 = bytes[byte_index] or 0
-		local b2 = bytes[byte_index + 1] or 0
-		local b3 = bytes[byte_index + 2] or 0
-		local b4 = bytes[byte_index + 3] or 0
+		local b1, b2, b3, b4 = byte(message, byte_index, byte_index + 3)
 		block_words[i] = u32(
-			b1
-			+ bit32.lshift(b2, 8)
-			+ bit32.lshift(b3, 16)
-			+ bit32.lshift(b4, 24)
+			(b1 or 0)
+			+ bit32.lshift(b2 or 0, 8)
+			+ bit32.lshift(b3 or 0, 16)
+			+ bit32.lshift(b4 or 0, 24)
 		)
 		byte_index += 4
 	end
-	return block_words
 end
 
 local function write_word_le(out_bytes, index, word)
@@ -83,11 +68,11 @@ local function write_word_le(out_bytes, index, word)
 end
 
 local function bytes_to_hex(bytes)
-	local hex = table.create(#bytes)
+	local parts = table.create(#bytes)
 	for i = 1, #bytes do
-		hex[i] = string.format("%02x", bytes[i])
+		parts[i] = HEX[bytes[i]]
 	end
-	return table.concat(hex)
+	return concat(parts)
 end
 
 local function rotr32(value, shift)
@@ -105,12 +90,10 @@ local function g(v, a, b, c, d, mx, my)
 	v[b] = rotr32(bit32.bxor(v[b], v[c]), 7)
 end
 
-local function permute_message_words(words)
-	local permuted = table.create(16)
+local function permute_into(permuted, words)
 	for i = 1, 16 do
 		permuted[i] = words[MESSAGE_PERMUTATION[i]]
 	end
-	return permuted
 end
 
 local function compress_state(cv_words, block_words, block_len, counter, flags)
@@ -128,7 +111,12 @@ local function compress_state(cv_words, block_words, block_len, counter, flags)
 	v[15] = block_len
 	v[16] = flags
 
-	local m = copy_words(block_words)
+	local m = table.create(16)
+	local next_m = table.create(16)
+	for i = 1, 16 do
+		m[i] = block_words[i]
+	end
+
 	for round_index = 1, 7 do
 		g(v, 1, 5, 9, 13, m[1], m[2])
 		g(v, 2, 6, 10, 14, m[3], m[4])
@@ -140,15 +128,15 @@ local function compress_state(cv_words, block_words, block_len, counter, flags)
 		g(v, 4, 5, 10, 15, m[15], m[16])
 
 		if round_index < 7 then
-			m = permute_message_words(m)
+			permute_into(next_m, m)
+			m, next_m = next_m, m
 		end
 	end
 
 	return v
 end
 
-local function compress_cv(cv_words, block_bytes, block_len, counter, flags)
-	local block_words = load_block_words(block_bytes, 1, block_len)
+local function compress_cv(cv_words, block_words, block_len, counter, flags)
 	local state = compress_state(cv_words, block_words, block_len, counter, flags)
 	local out = table.create(8)
 	for i = 1, 8 do
@@ -157,8 +145,7 @@ local function compress_cv(cv_words, block_bytes, block_len, counter, flags)
 	return out
 end
 
-local function compress_xof_bytes(cv_words, block_bytes, block_len, counter, flags)
-	local block_words = load_block_words(block_bytes, 1, block_len)
+local function compress_xof_bytes(cv_words, block_words, block_len, counter, flags)
 	local state = compress_state(cv_words, block_words, block_len, counter, flags)
 	for i = 1, 8 do
 		state[i] = bit32.bxor(state[i], state[8 + i])
@@ -179,26 +166,28 @@ local function chunk_start_flag(has_previous_block)
 	return CHUNK_START
 end
 
-local function chunk_output_node(bytes, start_index, input_len, chunk_counter, key_words, flags)
-	local cv = copy_words(key_words)
+local function chunk_output_node(message, start_index, input_len, chunk_counter, key_words, flags)
+	local cv = copy_words(key_words, 8)
 	local remaining = input_len
 	local position = start_index
 	local has_previous_block = false
+	local block_words = table.create(16)
 
 	while remaining > 64 do
-		local block_bytes = load_block_bytes(bytes, position, 64)
-		cv = compress_cv(cv, block_bytes, 64, chunk_counter, bit32.bor(flags, chunk_start_flag(has_previous_block)))
+		fill_block_words_from_string(message, position, 64, block_words)
+		cv = compress_cv(cv, block_words, 64, chunk_counter, bit32.bor(flags, chunk_start_flag(has_previous_block)))
 		position += 64
 		remaining -= 64
 		has_previous_block = true
 	end
 
-	local final_block = load_block_bytes(bytes, position, remaining)
+	local final_block_words = table.create(16)
+	fill_block_words_from_string(message, position, remaining, final_block_words)
 	local final_flags = bit32.bor(flags, CHUNK_END, chunk_start_flag(has_previous_block))
 
 	return {
 		input_cv = cv,
-		block = final_block,
+		block_words = final_block_words,
 		block_len = remaining,
 		counter = chunk_counter,
 		flags = final_flags,
@@ -206,7 +195,7 @@ local function chunk_output_node(bytes, start_index, input_len, chunk_counter, k
 end
 
 local function node_chaining_value(node)
-	return compress_cv(node.input_cv, node.block, node.block_len, node.counter, node.flags)
+	return compress_cv(node.input_cv, node.block_words, node.block_len, node.counter, node.flags)
 end
 
 local function node_root_bytes(node, out_len)
@@ -216,9 +205,9 @@ local function node_root_bytes(node, out_len)
 	local root_flags = bit32.bor(node.flags, ROOT)
 
 	while produced < out_len do
-		local block_counter = math.floor(seek / 64)
+		local block_counter = floor(seek / 64)
 		local offset = seek % 64
-		local block = compress_xof_bytes(node.input_cv, node.block, node.block_len, block_counter, root_flags)
+		local block = compress_xof_bytes(node.input_cv, node.block_words, node.block_len, block_counter, root_flags)
 		local take = math.min(64 - offset, out_len - produced)
 		for i = 1, take do
 			out[produced + i] = block[offset + i]
@@ -239,34 +228,33 @@ local function round_down_to_power_of_two(value)
 end
 
 local function left_subtree_len(input_len)
-	local full_chunks = math.floor((input_len - 1) / 1024)
+	local full_chunks = floor((input_len - 1) / 1024)
 	return round_down_to_power_of_two(full_chunks) * 1024
 end
 
-local function hash_subtree(bytes, start_index, input_len, chunk_counter, key_words, flags)
+local function hash_subtree(message, start_index, input_len, chunk_counter, key_words, flags)
 	if input_len <= 1024 then
-		return chunk_output_node(bytes, start_index, input_len, chunk_counter, key_words, flags)
+		return chunk_output_node(message, start_index, input_len, chunk_counter, key_words, flags)
 	end
 
 	local left_len = left_subtree_len(input_len)
 	local right_len = input_len - left_len
-	local left_node = hash_subtree(bytes, start_index, left_len, chunk_counter, key_words, flags)
-	local right_node = hash_subtree(bytes, start_index + left_len, right_len, chunk_counter + (left_len / 1024), key_words, flags)
+	local left_node = hash_subtree(message, start_index, left_len, chunk_counter, key_words, flags)
+	local right_node = hash_subtree(message, start_index + left_len, right_len, chunk_counter + (left_len / 1024), key_words, flags)
 
 	local left_cv = node_chaining_value(left_node)
 	local right_cv = node_chaining_value(right_node)
-	local block = table.create(64)
-	local index = 1
+	local block_words = table.create(16)
 	for i = 1, 8 do
-		index = write_word_le(block, index, left_cv[i])
+		block_words[i] = left_cv[i]
 	end
 	for i = 1, 8 do
-		index = write_word_le(block, index, right_cv[i])
+		block_words[8 + i] = right_cv[i]
 	end
 
 	return {
-		input_cv = copy_words(key_words),
-		block = block,
+		input_cv = copy_words(key_words, 8),
+		block_words = block_words,
 		block_len = 64,
 		counter = 0,
 		flags = bit32.bor(flags, PARENT),
@@ -283,8 +271,7 @@ local function blake3_hex(message, out_len)
 		error("BLAKE3 output length must be at least 1 byte", 2)
 	end
 
-	local bytes = load_bytes(message)
-	local root_node = hash_subtree(bytes, 1, #bytes, 0, IV, 0)
+	local root_node = hash_subtree(message, 1, #message, 0, IV, 0)
 	local out_bytes = node_root_bytes(root_node, out_len)
 	return bytes_to_hex(out_bytes)
 end
