@@ -32,6 +32,11 @@ for i = 2, 64 do
 	PADDING[i] = 0x00
 end
 
+local HEX = table.create(256)
+for i = 0, 255 do
+	HEX[i] = string.format("%02x", i)
+end
+
 local function F(x, y, z)
 	return bit32.bor(bit32.band(x, y), bit32.band(bit32.bnot(x), z))
 end
@@ -50,15 +55,6 @@ end
 
 local function add32(a, b)
 	return bit32.band(a + b, 0xFFFFFFFF)
-end
-
-local function md5_init()
-	return {
-		size = 0,
-		buffer = {0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476},
-		input = {},
-		digest = {},
-	}
 end
 
 local function md5_step(buffer, input)
@@ -97,72 +93,79 @@ local function md5_step(buffer, input)
 	buffer[4] = add32(buffer[4], DD)
 end
 
-local function md5_update(ctx, input_buffer, input_len)
-	local offset = ctx.size % 64
-	ctx.size = ctx.size + input_len
-
-	for i = 1, input_len do
-		ctx.input[offset + 1] = input_buffer[i]
-		offset = offset + 1
-
-		if offset % 64 == 0 then
-			local block = {}
-			for j = 0, 15 do
-				block[j + 1] = bit32.bor(
-					bit32.lshift(ctx.input[j * 4 + 4], 24),
-					bit32.lshift(ctx.input[j * 4 + 3], 16),
-					bit32.lshift(ctx.input[j * 4 + 2], 8),
-					ctx.input[j * 4 + 1]
-				)
-			end
-			md5_step(ctx.buffer, block)
-			offset = 0
-		end
+local function fill_block_from_string(block, text, start_index, byte_count)
+	local byte_index = start_index
+	for word_index = 1, 16 do
+		local b1, b2, b3, b4 = string.byte(text, byte_index, byte_index + 3)
+		block[word_index] = bit32.bor(
+			b1 or 0,
+			bit32.lshift(b2 or 0, 8),
+			bit32.lshift(b3 or 0, 16),
+			bit32.lshift(b4 or 0, 24)
+		)
+		byte_index += 4
 	end
 end
 
-local function md5_finalize(ctx)
-	local offset = ctx.size % 64
-	local padding_length = offset < 56 and (56 - offset) or (120 - offset)
-
-	md5_update(ctx, PADDING, padding_length)
-	ctx.size = ctx.size - padding_length
-
-	local block = {}
-	for j = 0, 13 do
-		block[j + 1] = bit32.bor(
-			bit32.lshift(ctx.input[j * 4 + 4], 24),
-			bit32.lshift(ctx.input[j * 4 + 3], 16),
-			bit32.lshift(ctx.input[j * 4 + 2], 8),
-			ctx.input[j * 4 + 1]
-		)
-	end
-	block[15] = bit32.band(ctx.size * 8, 0xFFFFFFFF)
-	block[16] = bit32.band(math.floor(ctx.size * 8 / 0x100000000), 0xFFFFFFFF)
-
-	md5_step(ctx.buffer, block)
-
-	for i = 0, 3 do
-		ctx.digest[i * 4 + 1] = bit32.band(ctx.buffer[i + 1], 0xFF)
-		ctx.digest[i * 4 + 2] = bit32.band(bit32.rshift(ctx.buffer[i + 1], 8), 0xFF)
-		ctx.digest[i * 4 + 3] = bit32.band(bit32.rshift(ctx.buffer[i + 1], 16), 0xFF)
-		ctx.digest[i * 4 + 4] = bit32.band(bit32.rshift(ctx.buffer[i + 1], 24), 0xFF)
-	end
+local function append_word_hex_le(parts, index, word)
+	parts[index] = HEX[bit32.band(word, 0xFF)]
+	parts[index + 1] = HEX[bit32.band(bit32.rshift(word, 8), 0xFF)]
+	parts[index + 2] = HEX[bit32.band(bit32.rshift(word, 16), 0xFF)]
+	parts[index + 3] = HEX[bit32.band(bit32.rshift(word, 24), 0xFF)]
+	return index + 4
 end
 
 local function md5_string(s)
-	local ctx = md5_init()
-	local bytes = {}
-	for i = 1, #s do
-		bytes[i] = string.byte(s, i)
+	local message_len = #s
+	local buffer = {0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476}
+	local block = table.create(16)
+	local full_chunks = message_len - (message_len % 64)
+
+	for chunk_start = 1, full_chunks, 64 do
+		fill_block_from_string(block, s, chunk_start, 64)
+		md5_step(buffer, block)
 	end
-	md5_update(ctx, bytes, #s)
-	md5_finalize(ctx)
-	local hex = ""
-	for i = 1, 16 do
-		hex = hex .. string.format("%02x", ctx.digest[i])
+
+	local tail_len = message_len - full_chunks
+	local tail = table.create(128, 0)
+	for i = 1, tail_len do
+		tail[i] = string.byte(s, full_chunks + i)
 	end
-	return hex
+	tail[tail_len + 1] = 0x80
+
+	local tail_total_len = tail_len < 56 and 64 or 128
+	local bit_length_lo = bit32.band(message_len * 8, 0xFFFFFFFF)
+	local bit_length_hi = bit32.band(math.floor(message_len * 8 / 0x100000000), 0xFFFFFFFF)
+
+	tail[tail_total_len - 7] = bit32.band(bit_length_lo, 0xFF)
+	tail[tail_total_len - 6] = bit32.band(bit32.rshift(bit_length_lo, 8), 0xFF)
+	tail[tail_total_len - 5] = bit32.band(bit32.rshift(bit_length_lo, 16), 0xFF)
+	tail[tail_total_len - 4] = bit32.band(bit32.rshift(bit_length_lo, 24), 0xFF)
+	tail[tail_total_len - 3] = bit32.band(bit_length_hi, 0xFF)
+	tail[tail_total_len - 2] = bit32.band(bit32.rshift(bit_length_hi, 8), 0xFF)
+	tail[tail_total_len - 1] = bit32.band(bit32.rshift(bit_length_hi, 16), 0xFF)
+	tail[tail_total_len] = bit32.band(bit32.rshift(bit_length_hi, 24), 0xFF)
+
+	for block_start = 1, tail_total_len, 64 do
+		local tail_index = block_start
+		for word_index = 1, 16 do
+			block[word_index] = bit32.bor(
+				tail[tail_index] or 0,
+				bit32.lshift(tail[tail_index + 1] or 0, 8),
+				bit32.lshift(tail[tail_index + 2] or 0, 16),
+				bit32.lshift(tail[tail_index + 3] or 0, 24)
+			)
+			tail_index += 4
+		end
+		md5_step(buffer, block)
+	end
+
+	local parts = table.create(16)
+	local hex_index = 1
+	for i = 1, 4 do
+		hex_index = append_word_hex_le(parts, hex_index, buffer[i])
+	end
+	return table.concat(parts)
 end
 
 local algorithms = {
