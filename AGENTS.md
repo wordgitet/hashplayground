@@ -24,6 +24,32 @@ rojo serve
 
 Then connect to the Rojo plugin in Roblox Studio and sync the project.
 
+## Tool Selection
+
+- Prefer repository files plus Rojo for all source edits.
+- Treat Roblox Studio as a preview, sync, and test target rather than the
+  canonical source tree.
+- Use shell tools for code search, Git work, file inspection, and release
+  prep.
+- Use Roblox MCP tools for Studio-only tasks such as:
+  - checking whether the bridge is alive
+  - reading place info and project structure
+  - inspecting object trees, properties, selections, and playtest output
+  - capturing screenshots or verifying runtime behavior
+- Do not use Roblox MCP script-editing tools as the default way to change
+  code when the same change can be made in `src/` and synced through Rojo.
+- Only use Roblox MCP edits for emergency Studio-side fixes or inspection
+  tasks that cannot be handled cleanly through the repository.
+- If a Studio-side hotfix is ever applied through MCP, mirror the same
+  change back into the repository immediately so Rojo remains the source of
+  truth.
+- Before starting substantial work in a new conversation, confirm which of
+  these is needed:
+  - repository edit
+  - Rojo sync or setup help
+  - Roblox MCP inspection or playtest help
+  - release, Git, or documentation work
+
 ## Project Layout
 
 - `src/client/HashGUI.client.lua`
