@@ -917,71 +917,36 @@ status_label = make("TextLabel", {
 	TextXAlignment = Enum.TextXAlignment.Left,
 }, status_row)
 
+local RESULT_PLACEHOLDER = "The output will appear here"
+
+local mode_configs
+
+local function get_default_pbkdf2_length()
+	return current_pbkdf2_digest == "sha512" and "64" or "32"
+end
+
+local function get_current_mode_config()
+	return mode_configs[current_mode] or mode_configs.hash
+end
+
 local function get_workspace_title()
-	if current_mode == "pbkdf2" then
-		return "PBKDF2"
-	elseif current_mode == "sco_snak" then
-		return "SCO SNAK"
-	elseif current_mode == "sco_reg" then
-		return "SCO Registration"
-	end
-	return "Hash"
+	return get_current_mode_config().title
 end
 
 local function get_workspace_subtitle()
-	if current_mode == "pbkdf2" then
-		return "Derive a key from a password, salt, and iteration count using HMAC-based PBKDF2."
-	elseif current_mode == "sco_snak" then
-		return "Generate SCO serial numbers, activation keys, and optional license checksum fields."
-	elseif current_mode == "sco_reg" then
-		return "Generate a SCO registration key from a serial number and host ID or from a registration lock."
-	end
-	return "Generate a digest from any input string using the selected algorithm and backend."
+	return get_current_mode_config().subtitle
 end
 
 local function get_output_title()
-	if current_mode == "pbkdf2" then
-		return "Derived key"
-	elseif current_mode == "sco_snak" then
-		return "Serial bundle"
-	elseif current_mode == "sco_reg" then
-		return "Registration key"
-	end
-	return "Result"
+	return get_current_mode_config().output_title
 end
 
 local function get_result_meta()
-	if current_mode == "pbkdf2" then
-		local iterations_text = pbkdf2_iterations_box and pbkdf2_iterations_box.Text or "1000"
-		local base = "PBKDF2-HMAC-" .. get_digest_label(current_pbkdf2_digest) .. "  |  " .. iterations_text .. " iterations"
-		if current_result_value ~= "" then
-			return base .. "  |  " .. tostring(#current_result_value) .. " chars"
-		end
-		return base
-	end
+	return get_current_mode_config().get_result_meta()
+end
 
-	if current_mode == "sco_snak" then
-		local base = "SCO SNAK  |  " .. get_sco_version_summary()
-		if current_result_value ~= "" then
-			return base .. "  |  " .. tostring(#current_result_value) .. " chars"
-		end
-		return base
-	end
-
-	if current_mode == "sco_reg" then
-		local source_label = get_text_value(sco_reglock_box, "") ~= "" and "reglock input" or "serial + host ID"
-		local base = "SCO registration  |  " .. source_label
-		if current_result_value ~= "" then
-			return base .. "  |  " .. tostring(#current_result_value) .. " chars"
-		end
-		return base
-	end
-
-	local base = get_algorithm_label(current_algorithm) .. "  |  " .. get_backend_label(current_backend_mode) .. " backend"
-	if current_result_value ~= "" then
-		return base .. "  |  " .. tostring(#current_result_value) .. " chars"
-	end
-	return base
+local function update_result_meta()
+	result_meta_label.Text = get_result_meta()
 end
 
 local function set_status(text, color)
@@ -992,170 +957,26 @@ local function set_status(text, color)
 	status_dot.BackgroundColor3 = color
 end
 
-local function set_result(text, color)
-	current_result_value = text or ""
-	result_box.Text = text
+local function set_result(text, color, stored_value)
+	result_box.Text = text or ""
 	result_box.TextColor3 = color
-	result_meta_label.Text = get_result_meta()
+	current_result_value = stored_value == nil and (text or "") or stored_value
+	update_result_meta()
 end
 
 local function clear_output(status_text, status_color)
-	set_result("The output will appear here", palette.subtle)
-	current_result_value = ""
-	result_meta_label.Text = get_result_meta()
+	set_result(RESULT_PLACEHOLDER, palette.subtle, "")
 	set_status(status_text or "Ready", status_color or palette.success)
 end
 
-local function refresh_summary()
-	if current_mode == "pbkdf2" then
-		summary_mode_value.Text = "PBKDF2"
-		summary_target_value.Text = get_digest_label(current_pbkdf2_digest)
-		summary_engine_value.Text = "Custom KDF"
-	elseif current_mode == "sco_snak" then
-		summary_mode_value.Text = "SCO SNAK"
-		summary_target_value.Text = get_sco_version_summary()
-		summary_engine_value.Text = "MD5 port"
-	elseif current_mode == "sco_reg" then
-		summary_mode_value.Text = "SCO Reg"
-		summary_target_value.Text = get_text_value(sco_reglock_box, "") ~= "" and "Registration lock" or "Serial + host ID"
-		summary_engine_value.Text = "MD5 port"
-	else
-		summary_mode_value.Text = "Hash"
-		summary_target_value.Text = get_algorithm_label(current_algorithm)
-		summary_engine_value.Text = get_backend_label(current_backend_mode)
-	end
+local function show_error(result_text, status_text)
+	set_result(result_text, palette.danger, "")
+	set_status(status_text, palette.danger)
 end
 
-local function refresh_header()
-	workspace_title.Text = get_workspace_title()
-	workspace_subtitle.Text = get_workspace_subtitle()
-	result_title.Text = get_output_title()
-	result_meta_label.Text = get_result_meta()
-end
-
-local function refresh_selectors()
-	for mode_key, row in pairs(mode_rows) do
-		style_row(row, mode_key == current_mode, true)
-	end
-
-	for algorithm_key, row in pairs(algorithm_rows) do
-		style_row(row, algorithm_key == current_algorithm, true)
-	end
-
-	for digest_key, row in pairs(digest_rows) do
-		style_row(row, digest_key == current_pbkdf2_digest, true)
-	end
-
-	for backend_key, row in pairs(backend_rows) do
-		local enabled = backend_key ~= "native" or is_native_backend_supported(current_algorithm)
-		style_row(row, backend_key == current_backend_mode and enabled, enabled)
-	end
-end
-
-local function refresh_visibility()
-	local hash_mode = current_mode == "hash"
-	local pbkdf2_mode = current_mode == "pbkdf2"
-	local sco_snak_mode = current_mode == "sco_snak"
-	local sco_reg_mode = current_mode == "sco_reg"
-	hash_workspace.Visible = hash_mode
-	pbkdf2_workspace.Visible = pbkdf2_mode
-	sco_snak_workspace.Visible = sco_snak_mode
-	sco_reg_workspace.Visible = sco_reg_mode
-	sidebar_algorithm_section.Visible = hash_mode
-	sidebar_backend_section.Visible = hash_mode
-	sidebar_digest_section.Visible = pbkdf2_mode
-end
-
-local function sync_shell()
-	refresh_header()
-	refresh_summary()
-	refresh_selectors()
-	refresh_visibility()
-	result_meta_label.Text = get_result_meta()
-end
-
-local function apply_mode(mode_key)
-	if mode_key ~= "hash" and mode_key ~= "pbkdf2" and mode_key ~= "sco_snak" and mode_key ~= "sco_reg" then
-		return
-	end
-
-	current_mode = mode_key
-	local ready_text = "Hash mode ready"
-	if mode_key == "pbkdf2" then
-		ready_text = "PBKDF2 ready"
-	elseif mode_key == "sco_snak" then
-		ready_text = "SCO SNAK ready"
-	elseif mode_key == "sco_reg" then
-		ready_text = "SCO registration ready"
-	end
-	clear_output(ready_text, palette.success)
-	if current_mode == "pbkdf2" then
-		if pbkdf2_iterations_box.Text == "" then
-			pbkdf2_iterations_box.Text = "1000"
-		end
-		if pbkdf2_length_box.Text == "" then
-			pbkdf2_length_box.Text = current_pbkdf2_digest == "sha512" and "64" or "32"
-		end
-	elseif current_mode == "sco_snak" then
-		if sco_product_id_box.Text == "" then
-			sco_product_id_box.Text = "203"
-		end
-		if sco_major_box.Text == "" then
-			sco_major_box.Text = "71"
-		end
-		if sco_minor_box.Text == "" then
-			sco_minor_box.Text = "4"
-		end
-	end
-	current_result_value = ""
-	sync_shell()
-end
-
-local function apply_algorithm(algorithm_key)
-	if not hash_suite[algorithm_key] then
-		return
-	end
-
-	current_algorithm = algorithm_key
-	if current_backend_mode == "native" and not is_native_backend_supported(current_algorithm) then
-		current_backend_mode = "custom"
-	end
-	clear_output("Algorithm selected", palette.success)
-	current_result_value = ""
-	sync_shell()
-end
-
-local function apply_backend_mode(backend_key)
-	if backend_key ~= "custom" and backend_key ~= "native" then
-		return
-	end
-	if backend_key == "native" and not is_native_backend_supported(current_algorithm) then
-		current_backend_mode = "custom"
-		clear_output("Native backend unavailable", palette.danger)
-		sync_shell()
-		return
-	end
-
-	current_backend_mode = backend_key
-	clear_output("Backend selected", palette.success)
-	current_result_value = ""
-	sync_shell()
-end
-
-local function apply_pbkdf2_digest(digest_key)
-	if digest_key ~= "sha256" and digest_key ~= "sha512" then
-		return
-	end
-
-	local previous_default = current_pbkdf2_digest == "sha512" and "64" or "32"
-	current_pbkdf2_digest = digest_key
-	local next_default = current_pbkdf2_digest == "sha512" and "64" or "32"
-	if pbkdf2_length_box.Text == "" or pbkdf2_length_box.Text == previous_default then
-		pbkdf2_length_box.Text = next_default
-	end
-	clear_output("Digest selected", palette.success)
-	current_result_value = ""
-	sync_shell()
+local function show_success(result_text, status_text)
+	set_result(result_text, palette.result)
+	set_status(status_text, palette.success)
 end
 
 local function format_sco_snak_result(result)
@@ -1179,245 +1000,408 @@ local function format_sco_reg_result(serial_number, host_id, registration_key)
 	}, "\n")
 end
 
-local function generate_hash()
-	if current_mode == "sco_snak" then
-		local product_id = tonumber(sco_product_id_box.Text or "")
-		local major = tonumber(sco_major_box.Text or "")
-		local minor = tonumber(sco_minor_box.Text or "")
-		local license_data = sco_license_box.Text or ""
-		local ok, result = pcall(function()
-			return sco_keygen_module.generate_snak(
-				product_id,
-				major,
-				minor,
-				license_data ~= "" and license_data or nil
-			)
-		end)
-		if not ok then
-			set_result("SCO SNAK failed: " .. tostring(result), palette.danger)
-			current_result_value = ""
-			set_status("SCO SNAK error", palette.danger)
-			result_meta_label.Text = get_result_meta()
-			return
-		end
-
-		set_result(format_sco_snak_result(result), palette.result)
-		set_status("SCO serial bundle ready", palette.success)
-		return
-	end
-
-	if current_mode == "sco_reg" then
-		local reglock = sco_reglock_box.Text or ""
-		local ok, serial_number, host_id, registration_key = pcall(function()
-			if reglock ~= "" then
-				local parsed = sco_keygen_module.parse_reglock(reglock)
-				return parsed.serial_number, parsed.host_id, sco_keygen_module.generate_registration_key(parsed.serial_number, parsed.host_id)
-			end
-
-			local serial_value = sco_reg_serial_box.Text or ""
-			local host_value = sco_host_id_box.Text or ""
-			return serial_value, host_value, sco_keygen_module.generate_registration_key(serial_value, host_value)
-		end)
-		if not ok then
-			set_result("SCO registration failed: " .. tostring(serial_number), palette.danger)
-			current_result_value = ""
-			set_status("SCO registration error", palette.danger)
-			result_meta_label.Text = get_result_meta()
-			return
-		end
-
-		set_result(format_sco_reg_result(serial_number, host_id, registration_key), palette.result)
-		set_status("Registration key ready", palette.success)
-		return
-	end
-
-	if current_mode == "pbkdf2" then
-		local password = pbkdf2_password_box.Text or ""
-		local salt = pbkdf2_salt_box.Text or ""
-		local iterations_value = tonumber(pbkdf2_iterations_box.Text or "")
-		local length_value = tonumber(pbkdf2_length_box.Text or "")
-
-		if not iterations_value or iterations_value ~= math.floor(iterations_value) or iterations_value <= 0 then
-			set_result("PBKDF2 iterations must be a positive integer.", palette.danger)
-			current_result_value = ""
-			set_status("Iterations required", palette.danger)
-			result_meta_label.Text = get_result_meta()
-			return
-		end
-
-		if not length_value or length_value ~= math.floor(length_value) or length_value <= 0 then
-			set_result("Derived key length must be a positive integer.", palette.danger)
-			current_result_value = ""
-			set_status("Length required", palette.danger)
-			result_meta_label.Text = get_result_meta()
-			return
-		end
-
-		local ok, derived_key = pcall(function()
-			return pbkdf2_module.derive(password, salt, iterations_value, length_value, current_pbkdf2_digest)
-		end)
-		if not ok then
-			set_result("PBKDF2 failed: " .. tostring(derived_key), palette.danger)
-			current_result_value = ""
-			set_status("PBKDF2 error", palette.danger)
-			result_meta_label.Text = get_result_meta()
-			return
-		end
-
-		set_result(derived_key, palette.result)
-		set_status("Derived key ready", palette.success)
-		return
-	end
-
+local function run_hash_mode()
 	local input_text = hash_input_box.Text or ""
 	if input_text == "" then
-		set_result("Please enter some text.", palette.danger)
-		current_result_value = ""
-		set_status("Input required", palette.danger)
-		result_meta_label.Text = get_result_meta()
+		show_error("Please enter some text.", "Input required")
 		return
 	end
 
 	local hash_fn = get_hash_function()
 	local ok, hash_value = pcall(hash_fn, input_text)
 	if not ok then
-		set_result("Hash failed: " .. tostring(hash_value), palette.danger)
-		current_result_value = ""
-		set_status("Hash error", palette.danger)
-		result_meta_label.Text = get_result_meta()
+		show_error("Hash failed: " .. tostring(hash_value), "Hash error")
 		return
 	end
 
-	set_result(hash_value, palette.result)
-	set_status("Hash generated", palette.success)
+	show_success(hash_value, "Hash generated")
+end
+
+local function run_pbkdf2_mode()
+	local password = pbkdf2_password_box.Text or ""
+	local salt = pbkdf2_salt_box.Text or ""
+	local iterations_value = tonumber(pbkdf2_iterations_box.Text or "")
+	local length_value = tonumber(pbkdf2_length_box.Text or "")
+
+	if not iterations_value or iterations_value ~= math.floor(iterations_value) or iterations_value <= 0 then
+		show_error("PBKDF2 iterations must be a positive integer.", "Iterations required")
+		return
+	end
+
+	if not length_value or length_value ~= math.floor(length_value) or length_value <= 0 then
+		show_error("Derived key length must be a positive integer.", "Length required")
+		return
+	end
+
+	local ok, derived_key = pcall(function()
+		return pbkdf2_module.derive(password, salt, iterations_value, length_value, current_pbkdf2_digest)
+	end)
+	if not ok then
+		show_error("PBKDF2 failed: " .. tostring(derived_key), "PBKDF2 error")
+		return
+	end
+
+	show_success(derived_key, "Derived key ready")
+end
+
+local function run_sco_snak_mode()
+	local product_id = tonumber(sco_product_id_box.Text or "")
+	local major = tonumber(sco_major_box.Text or "")
+	local minor = tonumber(sco_minor_box.Text or "")
+	local license_data = sco_license_box.Text or ""
+	local ok, result = pcall(function()
+		return sco_keygen_module.generate_snak(
+			product_id,
+			major,
+			minor,
+			license_data ~= "" and license_data or nil
+		)
+	end)
+	if not ok then
+		show_error("SCO SNAK failed: " .. tostring(result), "SCO SNAK error")
+		return
+	end
+
+	show_success(format_sco_snak_result(result), "SCO serial bundle ready")
+end
+
+local function run_sco_reg_mode()
+	local reglock = sco_reglock_box.Text or ""
+	local ok, serial_number, host_id, registration_key = pcall(function()
+		if reglock ~= "" then
+			local parsed = sco_keygen_module.parse_reglock(reglock)
+			return parsed.serial_number, parsed.host_id, sco_keygen_module.generate_registration_key(parsed.serial_number, parsed.host_id)
+		end
+
+		local serial_value = sco_reg_serial_box.Text or ""
+		local host_value = sco_host_id_box.Text or ""
+		return serial_value, host_value, sco_keygen_module.generate_registration_key(serial_value, host_value)
+	end)
+	if not ok then
+		show_error("SCO registration failed: " .. tostring(serial_number), "SCO registration error")
+		return
+	end
+
+	show_success(format_sco_reg_result(serial_number, host_id, registration_key), "Registration key ready")
+end
+
+mode_configs = {
+	hash = {
+		title = "Hash",
+		subtitle = "Generate a digest from any input string using the selected algorithm and backend.",
+		output_title = "Result",
+		ready_text = "Hash mode ready",
+		summary_mode = "Hash",
+		workspace = hash_workspace,
+		show_algorithm_section = true,
+		show_backend_section = true,
+		show_digest_section = false,
+		get_result_meta = function()
+			local base = get_algorithm_label(current_algorithm) .. "  |  " .. get_backend_label(current_backend_mode) .. " backend"
+			if current_result_value ~= "" then
+				return base .. "  |  " .. tostring(#current_result_value) .. " chars"
+			end
+			return base
+		end,
+		get_summary_target = function()
+			return get_algorithm_label(current_algorithm)
+		end,
+		get_summary_engine = function()
+			return get_backend_label(current_backend_mode)
+		end,
+		apply_defaults = function()
+		end,
+		clear_fields = function()
+			hash_input_box.Text = ""
+		end,
+		run = run_hash_mode,
+	},
+	pbkdf2 = {
+		title = "PBKDF2",
+		subtitle = "Derive a key from a password, salt, and iteration count using HMAC-based PBKDF2.",
+		output_title = "Derived key",
+		ready_text = "PBKDF2 ready",
+		summary_mode = "PBKDF2",
+		workspace = pbkdf2_workspace,
+		show_algorithm_section = false,
+		show_backend_section = false,
+		show_digest_section = true,
+		get_result_meta = function()
+			local iterations_text = pbkdf2_iterations_box and pbkdf2_iterations_box.Text or "1000"
+			local base = "PBKDF2-HMAC-" .. get_digest_label(current_pbkdf2_digest) .. "  |  " .. iterations_text .. " iterations"
+			if current_result_value ~= "" then
+				return base .. "  |  " .. tostring(#current_result_value) .. " chars"
+			end
+			return base
+		end,
+		get_summary_target = function()
+			return get_digest_label(current_pbkdf2_digest)
+		end,
+		get_summary_engine = function()
+			return "Custom KDF"
+		end,
+		apply_defaults = function()
+			if pbkdf2_iterations_box.Text == "" then
+				pbkdf2_iterations_box.Text = "1000"
+			end
+			if pbkdf2_length_box.Text == "" then
+				pbkdf2_length_box.Text = get_default_pbkdf2_length()
+			end
+		end,
+		clear_fields = function()
+			pbkdf2_password_box.Text = ""
+			pbkdf2_salt_box.Text = ""
+			pbkdf2_iterations_box.Text = "1000"
+			pbkdf2_length_box.Text = get_default_pbkdf2_length()
+		end,
+		run = run_pbkdf2_mode,
+	},
+	sco_snak = {
+		title = "SCO SNAK",
+		subtitle = "Generate SCO serial numbers, activation keys, and optional license checksum fields.",
+		output_title = "Serial bundle",
+		ready_text = "SCO SNAK ready",
+		summary_mode = "SCO SNAK",
+		workspace = sco_snak_workspace,
+		show_algorithm_section = false,
+		show_backend_section = false,
+		show_digest_section = false,
+		get_result_meta = function()
+			local base = "SCO SNAK  |  " .. get_sco_version_summary()
+			if current_result_value ~= "" then
+				return base .. "  |  " .. tostring(#current_result_value) .. " chars"
+			end
+			return base
+		end,
+		get_summary_target = function()
+			return get_sco_version_summary()
+		end,
+		get_summary_engine = function()
+			return "MD5 port"
+		end,
+		apply_defaults = function()
+			if sco_product_id_box.Text == "" then
+				sco_product_id_box.Text = "203"
+			end
+			if sco_major_box.Text == "" then
+				sco_major_box.Text = "71"
+			end
+			if sco_minor_box.Text == "" then
+				sco_minor_box.Text = "4"
+			end
+		end,
+		clear_fields = function()
+			sco_product_id_box.Text = "203"
+			sco_major_box.Text = "71"
+			sco_minor_box.Text = "4"
+			sco_license_box.Text = ""
+		end,
+		run = run_sco_snak_mode,
+	},
+	sco_reg = {
+		title = "SCO Registration",
+		subtitle = "Generate a SCO registration key from a serial number and host ID or from a registration lock.",
+		output_title = "Registration key",
+		ready_text = "SCO registration ready",
+		summary_mode = "SCO Reg",
+		workspace = sco_reg_workspace,
+		show_algorithm_section = false,
+		show_backend_section = false,
+		show_digest_section = false,
+		get_result_meta = function()
+			local source_label = get_text_value(sco_reglock_box, "") ~= "" and "reglock input" or "serial + host ID"
+			local base = "SCO registration  |  " .. source_label
+			if current_result_value ~= "" then
+				return base .. "  |  " .. tostring(#current_result_value) .. " chars"
+			end
+			return base
+		end,
+		get_summary_target = function()
+			return get_text_value(sco_reglock_box, "") ~= "" and "Registration lock" or "Serial + host ID"
+		end,
+		get_summary_engine = function()
+			return "MD5 port"
+		end,
+		apply_defaults = function()
+		end,
+		clear_fields = function()
+			sco_reg_serial_box.Text = ""
+			sco_host_id_box.Text = ""
+			sco_reglock_box.Text = ""
+		end,
+		run = run_sco_reg_mode,
+	},
+}
+
+local function refresh_summary()
+	local config = get_current_mode_config()
+	summary_mode_value.Text = config.summary_mode
+	summary_target_value.Text = config.get_summary_target()
+	summary_engine_value.Text = config.get_summary_engine()
+end
+
+local function refresh_header()
+	workspace_title.Text = get_workspace_title()
+	workspace_subtitle.Text = get_workspace_subtitle()
+	result_title.Text = get_output_title()
+	update_result_meta()
+end
+
+local function refresh_selectors()
+	for mode_key, row in pairs(mode_rows) do
+		style_row(row, mode_key == current_mode, true)
+	end
+
+	for algorithm_key, row in pairs(algorithm_rows) do
+		style_row(row, algorithm_key == current_algorithm, true)
+	end
+
+	for digest_key, row in pairs(digest_rows) do
+		style_row(row, digest_key == current_pbkdf2_digest, true)
+	end
+
+	for backend_key, row in pairs(backend_rows) do
+		local enabled = backend_key ~= "native" or is_native_backend_supported(current_algorithm)
+		style_row(row, backend_key == current_backend_mode and enabled, enabled)
+	end
+end
+
+local function refresh_visibility()
+	for mode_key, config in pairs(mode_configs) do
+		config.workspace.Visible = mode_key == current_mode
+	end
+
+	local config = get_current_mode_config()
+	sidebar_algorithm_section.Visible = config.show_algorithm_section
+	sidebar_backend_section.Visible = config.show_backend_section
+	sidebar_digest_section.Visible = config.show_digest_section
+end
+
+local function sync_shell()
+	refresh_header()
+	refresh_summary()
+	refresh_selectors()
+	refresh_visibility()
+	update_result_meta()
+end
+
+local function apply_mode(mode_key)
+	local config = mode_configs[mode_key]
+	if not config then
+		return
+	end
+
+	current_mode = mode_key
+	config.apply_defaults()
+	clear_output(config.ready_text, palette.success)
+	sync_shell()
+end
+
+local function apply_algorithm(algorithm_key)
+	if not hash_suite[algorithm_key] then
+		return
+	end
+
+	current_algorithm = algorithm_key
+	if current_backend_mode == "native" and not is_native_backend_supported(current_algorithm) then
+		current_backend_mode = "custom"
+	end
+	clear_output("Algorithm selected", palette.success)
+	sync_shell()
+end
+
+local function apply_backend_mode(backend_key)
+	if backend_key ~= "custom" and backend_key ~= "native" then
+		return
+	end
+	if backend_key == "native" and not is_native_backend_supported(current_algorithm) then
+		current_backend_mode = "custom"
+		clear_output("Native backend unavailable", palette.danger)
+		sync_shell()
+		return
+	end
+
+	current_backend_mode = backend_key
+	clear_output("Backend selected", palette.success)
+	sync_shell()
+end
+
+local function apply_pbkdf2_digest(digest_key)
+	if digest_key ~= "sha256" and digest_key ~= "sha512" then
+		return
+	end
+
+	local previous_default = get_default_pbkdf2_length()
+	current_pbkdf2_digest = digest_key
+	local next_default = get_default_pbkdf2_length()
+	if pbkdf2_length_box.Text == "" or pbkdf2_length_box.Text == previous_default then
+		pbkdf2_length_box.Text = next_default
+	end
+	clear_output("Digest selected", palette.success)
+	sync_shell()
+end
+
+local function generate_hash()
+	get_current_mode_config().run()
 end
 
 local function clear_fields()
-	if current_mode == "pbkdf2" then
-		pbkdf2_password_box.Text = ""
-		pbkdf2_salt_box.Text = ""
-		pbkdf2_iterations_box.Text = "1000"
-		pbkdf2_length_box.Text = current_pbkdf2_digest == "sha512" and "64" or "32"
-	elseif current_mode == "sco_snak" then
-		sco_product_id_box.Text = "203"
-		sco_major_box.Text = "71"
-		sco_minor_box.Text = "4"
-		sco_license_box.Text = ""
-	elseif current_mode == "sco_reg" then
-		sco_reg_serial_box.Text = ""
-		sco_host_id_box.Text = ""
-		sco_reglock_box.Text = ""
-	else
-		hash_input_box.Text = ""
-	end
+	get_current_mode_config().clear_fields()
 	clear_output("Ready", palette.success)
 	sync_shell()
 end
 
-for mode_key, row in pairs(mode_rows) do
-	row.MouseButton1Click:Connect(function()
-		apply_mode(mode_key)
+local function bind_click_map(rows, callback)
+	for key, row in pairs(rows) do
+		row.MouseButton1Click:Connect(function()
+			callback(key)
+		end)
+	end
+end
+
+local function bind_submit_on_enter(text_box, mode_key)
+	text_box.FocusLost:Connect(function(enter_pressed)
+		if enter_pressed and current_mode == mode_key then
+			generate_hash()
+		end
 	end)
 end
 
-for algorithm_key, row in pairs(algorithm_rows) do
-	row.MouseButton1Click:Connect(function()
-		apply_algorithm(algorithm_key)
-	end)
+bind_click_map(mode_rows, apply_mode)
+bind_click_map(algorithm_rows, apply_algorithm)
+bind_click_map(digest_rows, apply_pbkdf2_digest)
+bind_click_map(backend_rows, apply_backend_mode)
+
+for _, button in ipairs({
+	hash_generate_button,
+	pbkdf2_generate_button,
+	sco_snak_generate_button,
+	sco_reg_generate_button,
+}) do
+	button.MouseButton1Click:Connect(generate_hash)
 end
 
-for digest_key, row in pairs(digest_rows) do
-	row.MouseButton1Click:Connect(function()
-		apply_pbkdf2_digest(digest_key)
-	end)
+for _, button in ipairs({
+	hash_clear_button,
+	pbkdf2_clear_button,
+	sco_snak_clear_button,
+	sco_reg_clear_button,
+}) do
+	button.MouseButton1Click:Connect(clear_fields)
 end
 
-for backend_key, row in pairs(backend_rows) do
-	row.MouseButton1Click:Connect(function()
-		apply_backend_mode(backend_key)
-	end)
-end
-
-hash_generate_button.MouseButton1Click:Connect(generate_hash)
-hash_clear_button.MouseButton1Click:Connect(clear_fields)
-pbkdf2_generate_button.MouseButton1Click:Connect(generate_hash)
-pbkdf2_clear_button.MouseButton1Click:Connect(clear_fields)
-sco_snak_generate_button.MouseButton1Click:Connect(generate_hash)
-sco_snak_clear_button.MouseButton1Click:Connect(clear_fields)
-sco_reg_generate_button.MouseButton1Click:Connect(generate_hash)
-sco_reg_clear_button.MouseButton1Click:Connect(clear_fields)
-
-hash_input_box.FocusLost:Connect(function(enter_pressed)
-	if enter_pressed and current_mode == "hash" then
-		generate_hash()
-	end
-end)
-
-pbkdf2_password_box.FocusLost:Connect(function(enter_pressed)
-	if enter_pressed and current_mode == "pbkdf2" then
-		generate_hash()
-	end
-end)
-
-pbkdf2_salt_box.FocusLost:Connect(function(enter_pressed)
-	if enter_pressed and current_mode == "pbkdf2" then
-		generate_hash()
-	end
-end)
-
-pbkdf2_iterations_box.FocusLost:Connect(function(enter_pressed)
-	if enter_pressed and current_mode == "pbkdf2" then
-		generate_hash()
-	end
-end)
-
-pbkdf2_length_box.FocusLost:Connect(function(enter_pressed)
-	if enter_pressed and current_mode == "pbkdf2" then
-		generate_hash()
-	end
-end)
-
-sco_product_id_box.FocusLost:Connect(function(enter_pressed)
-	if enter_pressed and current_mode == "sco_snak" then
-		generate_hash()
-	end
-end)
-
-sco_major_box.FocusLost:Connect(function(enter_pressed)
-	if enter_pressed and current_mode == "sco_snak" then
-		generate_hash()
-	end
-end)
-
-sco_minor_box.FocusLost:Connect(function(enter_pressed)
-	if enter_pressed and current_mode == "sco_snak" then
-		generate_hash()
-	end
-end)
-
-sco_license_box.FocusLost:Connect(function(enter_pressed)
-	if enter_pressed and current_mode == "sco_snak" then
-		generate_hash()
-	end
-end)
-
-sco_reg_serial_box.FocusLost:Connect(function(enter_pressed)
-	if enter_pressed and current_mode == "sco_reg" then
-		generate_hash()
-	end
-end)
-
-sco_host_id_box.FocusLost:Connect(function(enter_pressed)
-	if enter_pressed and current_mode == "sco_reg" then
-		generate_hash()
-	end
-end)
-
-sco_reglock_box.FocusLost:Connect(function(enter_pressed)
-	if enter_pressed and current_mode == "sco_reg" then
-		generate_hash()
-	end
-end)
+bind_submit_on_enter(hash_input_box, "hash")
+bind_submit_on_enter(pbkdf2_password_box, "pbkdf2")
+bind_submit_on_enter(pbkdf2_salt_box, "pbkdf2")
+bind_submit_on_enter(pbkdf2_iterations_box, "pbkdf2")
+bind_submit_on_enter(pbkdf2_length_box, "pbkdf2")
+bind_submit_on_enter(sco_product_id_box, "sco_snak")
+bind_submit_on_enter(sco_major_box, "sco_snak")
+bind_submit_on_enter(sco_minor_box, "sco_snak")
+bind_submit_on_enter(sco_license_box, "sco_snak")
+bind_submit_on_enter(sco_reg_serial_box, "sco_reg")
+bind_submit_on_enter(sco_host_id_box, "sco_reg")
+bind_submit_on_enter(sco_reglock_box, "sco_reg")
 
 sync_shell()
 clear_output("Ready", palette.success)
