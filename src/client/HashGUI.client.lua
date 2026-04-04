@@ -39,6 +39,8 @@ local hash_suite = {
 	sha1 = sha1_module.hash or sha1_module.sha1,
 	sha256 = sha256_module.hash or sha256_module.sha256,
 	sha512 = sha512_module.hash or sha512_module.sha512,
+	sha512_256 = sha512_module.sha512_256,
+	sha512_224 = sha512_module.sha512_224,
 	blake2b = blake2b_module.hash or blake2b_module.blake2b,
 	blake3 = blake3_module.hash or blake3_module.blake3,
 	crc8 = crc_module.crc8,
@@ -88,6 +90,8 @@ local algorithm_labels = {
 	sha1 = "SHA-1",
 	sha256 = "SHA-256",
 	sha512 = "SHA-512",
+	sha512_256 = "SHA-512/256",
+	sha512_224 = "SHA-512/224",
 	blake2b = "BLAKE2b",
 	blake3 = "BLAKE3",
 	crc8 = "CRC-8",
@@ -96,7 +100,7 @@ local algorithm_labels = {
 	crc32 = "CRC-32",
 }
 
-local algorithm_order = {"md5", "sha1", "sha256", "sha512", "blake2b", "blake3", "crc8", "crc16", "crc24", "crc32"}
+local algorithm_order = {"md5", "sha1", "sha256", "sha512", "sha512_256", "sha512_224", "blake2b", "blake3", "crc8", "crc16", "crc24", "crc32"}
 local backend_labels = {
 	custom = "Custom",
 	native = "Native",

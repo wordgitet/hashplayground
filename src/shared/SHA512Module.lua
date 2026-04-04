@@ -77,6 +77,26 @@ local H0_LO = {
 	0xade682d1, 0x2b3e6c1f, 0xfb41bd6b, 0x137e2179,
 }
 
+local H0_256_HI = {
+	0x22312194, 0x9f555fa3, 0x2393b86b, 0x96387719,
+	0x96283ee2, 0xbe5e1e25, 0x2b0199fc, 0x0eb72ddc,
+}
+
+local H0_256_LO = {
+	0xfc2bf72c, 0xc84c64c2, 0x6f53b151, 0x5940eabd,
+	0xa88effe3, 0x53863992, 0x2c85b8aa, 0x81c52ca2,
+}
+
+local H0_224_HI = {
+	0x8c3d37c8, 0x73e19966, 0x1dfab7ae, 0x679dd514,
+	0x0f6d2b69, 0x77e36f73, 0x3f9d85a8, 0x1112e6ad,
+}
+
+local H0_224_LO = {
+	0x19544da2, 0x89dcd4d6, 0x32ff9c82, 0x582f9fcf,
+	0x7bd44da8, 0x04c48942, 0x6a1d36c8, 0x91d692a1,
+}
+
 local W_HI = table.create(80)
 local W_LO = table.create(80)
 
@@ -199,7 +219,7 @@ local function append64_hex(parts, index, hi, lo)
 	return index + 8
 end
 
-local function sha512_state(message)
+local function sha512_state(message, initial_hi, initial_lo)
 	if type(message) ~= "string" then
 		error("SHA-512 input must be a string", 2)
 	end
@@ -213,8 +233,8 @@ local function sha512_state(message)
 	local h_hi = table.create(8)
 	local h_lo = table.create(8)
 	for i = 1, 8 do
-		h_hi[i] = H0_HI[i]
-		h_lo[i] = H0_LO[i]
+		h_hi[i] = initial_hi[i]
+		h_lo[i] = initial_lo[i]
 	end
 
 	for block_start = 1, #padded, BLOCK_SIZE do
@@ -268,35 +288,66 @@ local function sha512_state(message)
 	return h_hi, h_lo
 end
 
-local function sha512_bytes(message)
-	local h_hi, h_lo = sha512_state(message)
-	local parts = table.create(8)
-	for i = 1, 8 do
+local function digest_bytes(message, initial_hi, initial_lo, output_bytes)
+	local h_hi, h_lo = sha512_state(message, initial_hi, initial_lo)
+	local word_count = math.ceil(output_bytes / 8)
+	local parts = table.create(word_count)
+	for i = 1, word_count do
 		parts[i] = pack64_be(h_hi[i], h_lo[i])
 	end
-	return table.concat(parts)
+	return string.sub(table.concat(parts), 1, output_bytes)
 end
 
-local function sha512_hex(message)
-	local h_hi, h_lo = sha512_state(message)
-	local hex_parts = table.create(64)
+local function digest_hex(message, initial_hi, initial_lo, output_bytes)
+	local h_hi, h_lo = sha512_state(message, initial_hi, initial_lo)
+	local hex_parts = table.create(math.ceil(output_bytes / 8) * 16)
 	local hex_index = 1
-	for i = 1, 8 do
+	for i = 1, math.ceil(output_bytes / 8) do
 		hex_index = append64_hex(hex_parts, hex_index, h_hi[i], h_lo[i])
 	end
 
-	return table.concat(hex_parts)
+	return string.sub(table.concat(hex_parts), 1, output_bytes * 2)
+end
+
+local function sha512_bytes(message)
+	return digest_bytes(message, H0_HI, H0_LO, 64)
+end
+
+local function sha512_hex(message)
+	return digest_hex(message, H0_HI, H0_LO, 64)
+end
+
+local function sha512_256_bytes(message)
+	return digest_bytes(message, H0_256_HI, H0_256_LO, 32)
+end
+
+local function sha512_256_hex(message)
+	return digest_hex(message, H0_256_HI, H0_256_LO, 32)
+end
+
+local function sha512_224_bytes(message)
+	return digest_bytes(message, H0_224_HI, H0_224_LO, 28)
+end
+
+local function sha512_224_hex(message)
+	return digest_hex(message, H0_224_HI, H0_224_LO, 28)
 end
 
 local algorithms = {
 	sha512 = sha512_hex,
+	sha512_256 = sha512_256_hex,
+	sha512_224 = sha512_224_hex,
 }
 
 return {
 	hash = sha512_hex,
 	sha512 = sha512_hex,
 	sha512_512 = sha512_hex,
+	sha512_256 = sha512_256_hex,
+	sha512_224 = sha512_224_hex,
 	sha512_bytes = sha512_bytes,
+	sha512_256_bytes = sha512_256_bytes,
+	sha512_224_bytes = sha512_224_bytes,
 	digest_bytes = sha512_bytes,
 	block_size = 128,
 	digest_size = 64,
