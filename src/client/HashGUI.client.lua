@@ -35,6 +35,8 @@ local hmac_module = require_module("HMACModule")
 local pbkdf2_module = require_module("PBKDF2Module")
 local sco_keygen_module = require_module("SCOKeygenModule")
 
+local get_hash_output_length_value
+
 local hash_suite = {
 	md5 = md5_module.hash or md5_module.md5,
 	sha1 = sha1_module.hash or sha1_module.sha1,
@@ -46,6 +48,12 @@ local hash_suite = {
 	sha3_256 = sha3_module.sha3_256,
 	sha3_384 = sha3_module.sha3_384,
 	sha3_512 = sha3_module.sha3_512,
+	shake128 = function(input_text)
+		return sha3_module.shake128(input_text, get_hash_output_length_value())
+	end,
+	shake256 = function(input_text)
+		return sha3_module.shake256(input_text, get_hash_output_length_value())
+	end,
 	blake2b = blake2b_module.hash or blake2b_module.blake2b,
 	blake3 = blake3_module.hash or blake3_module.blake3,
 	crc8 = crc_module.crc8,
@@ -101,6 +109,8 @@ local algorithm_labels = {
 	sha3_256 = "SHA3-256",
 	sha3_384 = "SHA3-384",
 	sha3_512 = "SHA3-512",
+	shake128 = "SHAKE128",
+	shake256 = "SHAKE256",
 	blake2b = "BLAKE2b",
 	blake3 = "BLAKE3",
 	crc8 = "CRC-8",
@@ -109,7 +119,7 @@ local algorithm_labels = {
 	crc32 = "CRC-32",
 }
 
-local algorithm_order = {"md5", "sha1", "sha256", "sha512", "sha512_256", "sha512_224", "sha3_224", "sha3_256", "sha3_384", "sha3_512", "blake2b", "blake3", "crc8", "crc16", "crc24", "crc32"}
+local algorithm_order = {"md5", "sha1", "sha256", "sha512", "sha512_256", "sha512_224", "sha3_224", "sha3_256", "sha3_384", "sha3_512", "shake128", "shake256", "blake2b", "blake3", "crc8", "crc16", "crc24", "crc32"}
 local backend_labels = {
 	custom = "Custom",
 	native = "Native",
@@ -174,6 +184,8 @@ local pbkdf2_workspace
 local sco_snak_workspace
 local sco_reg_workspace
 local hash_input_box
+local hash_output_length_box
+local hash_output_length_field
 local hmac_key_box
 local hmac_message_box
 local pbkdf2_password_box
@@ -265,6 +277,28 @@ local function get_sco_version_summary()
 	local major = get_text_value(sco_major_box, "?")
 	local minor = get_text_value(sco_minor_box, "?")
 	return "Product " .. product_id .. "  |  Version " .. major .. "." .. minor
+end
+
+local function is_shake_algorithm(algorithm_key)
+	return algorithm_key == "shake128" or algorithm_key == "shake256"
+end
+
+local function get_default_hash_output_length(algorithm_key)
+	if algorithm_key == "shake256" then
+		return "64"
+	elseif algorithm_key == "shake128" then
+		return "32"
+	end
+	return ""
+end
+
+get_hash_output_length_value = function()
+	local default_length = tonumber(get_default_hash_output_length(current_algorithm)) or 32
+	local length_value = tonumber(hash_output_length_box and hash_output_length_box.Text or "")
+	if not length_value then
+		return default_length
+	end
+	return length_value
 end
 
 local function is_native_backend_supported(algorithm_key)
@@ -771,10 +805,23 @@ end
 create_divider(workspace, 2)
 
 do
-	hash_workspace = create_section_frame(workspace, 3, 204)
-	local _, hash_input = create_field(hash_workspace, "Input", "Type or paste text to hash", true, 118, false)
+	hash_workspace = create_section_frame(workspace, 3, 236)
+	local _, hash_input = create_field(hash_workspace, "Input", "Type or paste text to hash", true, 104, false)
 	hash_input_box = hash_input
 	hash_input.Position = UDim2.new(0, 0, 0, 0)
+	local hash_options_row = make("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 0, 0, 126),
+		Size = UDim2.new(1, 0, 0, 60),
+	}, hash_workspace)
+	hash_output_length_field = make("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(0.5, -6, 1, 0),
+		Visible = false,
+	}, hash_options_row)
+	local _, output_length_box = create_field(hash_output_length_field, "Output bytes", "32", false, 40, false)
+	hash_output_length_box = output_length_box
+	hash_output_length_box.Text = "32"
 	local hash_action_row = make("Frame", {
 		BackgroundTransparency = 1,
 		Position = UDim2.new(0, 0, 1, -36),
@@ -1224,6 +1271,14 @@ local function run_hash_mode()
 		return
 	end
 
+	if is_shake_algorithm(current_algorithm) then
+		local output_length = tonumber(hash_output_length_box.Text or "")
+		if not output_length or output_length ~= math.floor(output_length) or output_length <= 0 then
+			show_error("SHAKE output bytes must be a positive integer.", "Length required")
+			return
+		end
+	end
+
 	local hash_fn = get_hash_function()
 	local ok, hash_value = pcall(hash_fn, input_text)
 	if not ok then
@@ -1340,6 +1395,9 @@ mode_configs = {
 		show_digest_section = false,
 		get_result_meta = function()
 			local base = get_algorithm_label(current_algorithm) .. "  |  " .. get_backend_label(current_backend_mode) .. " backend"
+			if is_shake_algorithm(current_algorithm) then
+				base = base .. "  |  " .. tostring(get_hash_output_length_value()) .. " output bytes"
+			end
 			if current_result_value ~= "" then
 				return base .. "  |  " .. tostring(#current_result_value) .. " chars"
 			end
@@ -1352,9 +1410,13 @@ mode_configs = {
 			return get_backend_label(current_backend_mode)
 		end,
 		apply_defaults = function()
+			if is_shake_algorithm(current_algorithm) and hash_output_length_box.Text == "" then
+				hash_output_length_box.Text = get_default_hash_output_length(current_algorithm)
+			end
 		end,
 		clear_fields = function()
 			hash_input_box.Text = ""
+			hash_output_length_box.Text = get_default_hash_output_length(current_algorithm)
 		end,
 		run = run_hash_mode,
 	},
@@ -1551,6 +1613,7 @@ local function refresh_visibility()
 	sidebar_algorithm_section.Visible = config.show_algorithm_section
 	sidebar_backend_section.Visible = config.show_backend_section
 	sidebar_digest_section.Visible = config.show_digest_section
+	hash_output_length_field.Visible = current_mode == "hash" and is_shake_algorithm(current_algorithm)
 	for digest_key, row in pairs(digest_rows) do
 		row.Visible = config.show_digest_section and mode_allows_digest(config, digest_key)
 	end
@@ -1584,7 +1647,16 @@ local function apply_algorithm(algorithm_key)
 		return
 	end
 
+	local previous_default = get_default_hash_output_length(current_algorithm)
 	current_algorithm = algorithm_key
+	local next_default = get_default_hash_output_length(current_algorithm)
+	if next_default ~= "" then
+		if hash_output_length_box.Text == "" or hash_output_length_box.Text == previous_default then
+			hash_output_length_box.Text = next_default
+		end
+	elseif hash_output_length_box.Text == previous_default then
+		hash_output_length_box.Text = ""
+	end
 	if current_backend_mode == "native" and not is_native_backend_supported(current_algorithm) then
 		current_backend_mode = "custom"
 	end
@@ -1693,6 +1765,7 @@ for _, button in ipairs({
 end
 
 bind_submit_on_enter(hash_input_box, "hash")
+bind_submit_on_enter(hash_output_length_box, "hash")
 bind_submit_on_enter(hmac_key_box, "hmac")
 bind_submit_on_enter(hmac_message_box, "hmac")
 bind_submit_on_enter(pbkdf2_password_box, "pbkdf2")

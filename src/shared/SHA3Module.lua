@@ -16,6 +16,7 @@ local concat = table.concat
 
 local MASK32 = 0xFFFFFFFF
 local SHA3_SUFFIX = 0x06
+local SHAKE_SUFFIX = 0x1F
 
 local RHO = {
 	0, 1, 62, 28, 27,
@@ -162,122 +163,137 @@ local function keccak_f1600(state_lo, state_hi)
 	end
 end
 
-local function squeeze_hex(state_lo, state_hi, output_bytes)
+local function squeeze_hex(state_lo, state_hi, rate_words, output_bytes)
 	local parts = table.create(output_bytes)
 	local written = 0
-	local lane_index = 1
 
 	while written < output_bytes do
-		local lo = state_lo[lane_index]
-		local hi = state_hi[lane_index]
-		local take = math.min(8, output_bytes - written)
+		for lane_index = 1, rate_words do
+			if written >= output_bytes then
+				break
+			end
 
-		if take >= 1 then parts[written + 1] = HEX[band(lo, 0xFF)] end
-		if take >= 2 then parts[written + 2] = HEX[band(rshift(lo, 8), 0xFF)] end
-		if take >= 3 then parts[written + 3] = HEX[band(rshift(lo, 16), 0xFF)] end
-		if take >= 4 then parts[written + 4] = HEX[band(rshift(lo, 24), 0xFF)] end
-		if take >= 5 then parts[written + 5] = HEX[band(hi, 0xFF)] end
-		if take >= 6 then parts[written + 6] = HEX[band(rshift(hi, 8), 0xFF)] end
-		if take >= 7 then parts[written + 7] = HEX[band(rshift(hi, 16), 0xFF)] end
-		if take >= 8 then parts[written + 8] = HEX[band(rshift(hi, 24), 0xFF)] end
+			local lo = state_lo[lane_index]
+			local hi = state_hi[lane_index]
+			local take = math.min(8, output_bytes - written)
 
-		written += take
-		lane_index += 1
+			if take >= 1 then parts[written + 1] = HEX[band(lo, 0xFF)] end
+			if take >= 2 then parts[written + 2] = HEX[band(rshift(lo, 8), 0xFF)] end
+			if take >= 3 then parts[written + 3] = HEX[band(rshift(lo, 16), 0xFF)] end
+			if take >= 4 then parts[written + 4] = HEX[band(rshift(lo, 24), 0xFF)] end
+			if take >= 5 then parts[written + 5] = HEX[band(hi, 0xFF)] end
+			if take >= 6 then parts[written + 6] = HEX[band(rshift(hi, 8), 0xFF)] end
+			if take >= 7 then parts[written + 7] = HEX[band(rshift(hi, 16), 0xFF)] end
+			if take >= 8 then parts[written + 8] = HEX[band(rshift(hi, 24), 0xFF)] end
+
+			written += take
+		end
+
+		if written < output_bytes then
+			keccak_f1600(state_lo, state_hi)
+		end
 	end
 
 	return concat(parts)
 end
 
-local function squeeze_bytes(state_lo, state_hi, output_bytes)
+local function squeeze_bytes(state_lo, state_hi, rate_words, output_bytes)
 	local parts = table.create(math.ceil(output_bytes / 8))
 	local written = 0
-	local lane_index = 1
+	local part_index = 1
 
 	while written < output_bytes do
-		local lo = state_lo[lane_index]
-		local hi = state_hi[lane_index]
-		local chunk = string.char(
-			band(lo, 0xFF),
-			band(rshift(lo, 8), 0xFF),
-			band(rshift(lo, 16), 0xFF),
-			band(rshift(lo, 24), 0xFF),
-			band(hi, 0xFF),
-			band(rshift(hi, 8), 0xFF),
-			band(rshift(hi, 16), 0xFF),
-			band(rshift(hi, 24), 0xFF)
-		)
-		local remaining = output_bytes - written
-		if remaining < 8 then
-			chunk = string.sub(chunk, 1, remaining)
+		for lane_index = 1, rate_words do
+			if written >= output_bytes then
+				break
+			end
+
+			local lo = state_lo[lane_index]
+			local hi = state_hi[lane_index]
+			local chunk = string.char(
+				band(lo, 0xFF),
+				band(rshift(lo, 8), 0xFF),
+				band(rshift(lo, 16), 0xFF),
+				band(rshift(lo, 24), 0xFF),
+				band(hi, 0xFF),
+				band(rshift(hi, 8), 0xFF),
+				band(rshift(hi, 16), 0xFF),
+				band(rshift(hi, 24), 0xFF)
+			)
+			local remaining = output_bytes - written
+			if remaining < 8 then
+				chunk = string.sub(chunk, 1, remaining)
+			end
+			parts[part_index] = chunk
+			written += #chunk
+			part_index += 1
 		end
-		parts[lane_index] = chunk
-		written += #chunk
-		lane_index += 1
+
+		if written < output_bytes then
+			keccak_f1600(state_lo, state_hi)
+		end
 	end
 
 	return concat(parts)
+end
+
+local function absorb_sponge(message, rate_bytes, suffix)
+	if type(message) ~= "string" then
+		error("SHA-3 input must be a string", 2)
+	end
+
+	local state_lo = table.create(25, 0)
+	local state_hi = table.create(25, 0)
+	local rate_words = rate_bytes // 8
+	local message_len = #message
+	local full_blocks = message_len // rate_bytes
+	local block_start = 1
+
+	for _ = 1, full_blocks do
+		absorb_block_from_string(state_lo, state_hi, message, block_start, rate_words)
+		keccak_f1600(state_lo, state_hi)
+		block_start += rate_bytes
+	end
+
+	local remainder = message_len % rate_bytes
+	local block = table.create(rate_bytes, 0)
+	for i = 1, remainder do
+		block[i] = byte(message, block_start + i - 1) :: number
+	end
+	block[remainder + 1] = bxor(block[remainder + 1] or 0, suffix)
+	block[rate_bytes] = bxor(block[rate_bytes] or 0, 0x80)
+	absorb_block_from_bytes(state_lo, state_hi, block, rate_words)
+	keccak_f1600(state_lo, state_hi)
+
+	return state_lo, state_hi, rate_words
 end
 
 local function sha3_hex(message, rate_bytes, output_bytes)
-	if type(message) ~= "string" then
-		error("SHA-3 input must be a string", 2)
-	end
-
-	local state_lo = table.create(25, 0)
-	local state_hi = table.create(25, 0)
-	local rate_words = rate_bytes // 8
-	local message_len = #message
-	local full_blocks = message_len // rate_bytes
-	local block_start = 1
-
-	for _ = 1, full_blocks do
-		absorb_block_from_string(state_lo, state_hi, message, block_start, rate_words)
-		keccak_f1600(state_lo, state_hi)
-		block_start += rate_bytes
-	end
-
-	local remainder = message_len % rate_bytes
-	local block = table.create(rate_bytes, 0)
-	for i = 1, remainder do
-		block[i] = byte(message, block_start + i - 1) :: number
-	end
-	block[remainder + 1] = bxor(block[remainder + 1] or 0, SHA3_SUFFIX)
-	block[rate_bytes] = bxor(block[rate_bytes] or 0, 0x80)
-	absorb_block_from_bytes(state_lo, state_hi, block, rate_words)
-	keccak_f1600(state_lo, state_hi)
-
-	return squeeze_hex(state_lo, state_hi, output_bytes)
+	local state_lo, state_hi, rate_words = absorb_sponge(message, rate_bytes, SHA3_SUFFIX)
+	return squeeze_hex(state_lo, state_hi, rate_words, output_bytes)
 end
 
 local function sha3_bytes(message, rate_bytes, output_bytes)
-	if type(message) ~= "string" then
-		error("SHA-3 input must be a string", 2)
+	local state_lo, state_hi, rate_words = absorb_sponge(message, rate_bytes, SHA3_SUFFIX)
+	return squeeze_bytes(state_lo, state_hi, rate_words, output_bytes)
+end
+
+local function shake_hex(message, rate_bytes, output_bytes)
+	if type(output_bytes) ~= "number" or output_bytes ~= math.floor(output_bytes) or output_bytes <= 0 then
+		error("SHAKE output length must be a positive integer", 2)
 	end
 
-	local state_lo = table.create(25, 0)
-	local state_hi = table.create(25, 0)
-	local rate_words = rate_bytes // 8
-	local message_len = #message
-	local full_blocks = message_len // rate_bytes
-	local block_start = 1
+	local state_lo, state_hi, rate_words = absorb_sponge(message, rate_bytes, SHAKE_SUFFIX)
+	return squeeze_hex(state_lo, state_hi, rate_words, output_bytes)
+end
 
-	for _ = 1, full_blocks do
-		absorb_block_from_string(state_lo, state_hi, message, block_start, rate_words)
-		keccak_f1600(state_lo, state_hi)
-		block_start += rate_bytes
+local function shake_bytes(message, rate_bytes, output_bytes)
+	if type(output_bytes) ~= "number" or output_bytes ~= math.floor(output_bytes) or output_bytes <= 0 then
+		error("SHAKE output length must be a positive integer", 2)
 	end
 
-	local remainder = message_len % rate_bytes
-	local block = table.create(rate_bytes, 0)
-	for i = 1, remainder do
-		block[i] = byte(message, block_start + i - 1) :: number
-	end
-	block[remainder + 1] = bxor(block[remainder + 1] or 0, SHA3_SUFFIX)
-	block[rate_bytes] = bxor(block[rate_bytes] or 0, 0x80)
-	absorb_block_from_bytes(state_lo, state_hi, block, rate_words)
-	keccak_f1600(state_lo, state_hi)
-
-	return squeeze_bytes(state_lo, state_hi, output_bytes)
+	local state_lo, state_hi, rate_words = absorb_sponge(message, rate_bytes, SHAKE_SUFFIX)
+	return squeeze_bytes(state_lo, state_hi, rate_words, output_bytes)
 end
 
 local function sha3_224_hex(message)
@@ -312,11 +328,33 @@ local function sha3_512_bytes(message)
 	return sha3_bytes(message, 72, 64)
 end
 
+local function shake128_hex(message, output_bytes)
+	return shake_hex(message, 168, output_bytes)
+end
+
+local function shake256_hex(message, output_bytes)
+	return shake_hex(message, 136, output_bytes)
+end
+
+local function shake128_bytes(message, output_bytes)
+	return shake_bytes(message, 168, output_bytes)
+end
+
+local function shake256_bytes(message, output_bytes)
+	return shake_bytes(message, 136, output_bytes)
+end
+
 local algorithms = {
 	sha3_224 = sha3_224_hex,
 	sha3_256 = sha3_256_hex,
 	sha3_384 = sha3_384_hex,
 	sha3_512 = sha3_512_hex,
+	shake128 = function(message)
+		return shake128_hex(message, 32)
+	end,
+	shake256 = function(message)
+		return shake256_hex(message, 64)
+	end,
 }
 
 return {
@@ -330,5 +368,9 @@ return {
 	sha3_256_bytes = sha3_256_bytes,
 	sha3_384_bytes = sha3_384_bytes,
 	sha3_512_bytes = sha3_512_bytes,
+	shake128 = shake128_hex,
+	shake256 = shake256_hex,
+	shake128_bytes = shake128_bytes,
+	shake256_bytes = shake256_bytes,
 	algorithms = algorithms,
 }
