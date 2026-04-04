@@ -36,6 +36,8 @@ local pbkdf2_module = require_module("PBKDF2Module")
 local sco_keygen_module = require_module("SCOKeygenModule")
 
 local get_hash_output_length_value
+local get_hash_function_name_value
+local get_hash_customization_value
 
 local hash_suite = {
 	md5 = md5_module.hash or md5_module.md5,
@@ -53,6 +55,12 @@ local hash_suite = {
 	end,
 	shake256 = function(input_text)
 		return sha3_module.shake256(input_text, get_hash_output_length_value())
+	end,
+	cshake128 = function(input_text)
+		return sha3_module.cshake128(input_text, get_hash_output_length_value(), get_hash_function_name_value(), get_hash_customization_value())
+	end,
+	cshake256 = function(input_text)
+		return sha3_module.cshake256(input_text, get_hash_output_length_value(), get_hash_function_name_value(), get_hash_customization_value())
 	end,
 	blake2b = blake2b_module.hash or blake2b_module.blake2b,
 	blake3 = blake3_module.hash or blake3_module.blake3,
@@ -111,6 +119,8 @@ local algorithm_labels = {
 	sha3_512 = "SHA3-512",
 	shake128 = "SHAKE128",
 	shake256 = "SHAKE256",
+	cshake128 = "cSHAKE128",
+	cshake256 = "cSHAKE256",
 	blake2b = "BLAKE2b",
 	blake3 = "BLAKE3",
 	crc8 = "CRC-8",
@@ -119,7 +129,7 @@ local algorithm_labels = {
 	crc32 = "CRC-32",
 }
 
-local algorithm_order = {"md5", "sha1", "sha256", "sha512", "sha512_256", "sha512_224", "sha3_224", "sha3_256", "sha3_384", "sha3_512", "shake128", "shake256", "blake2b", "blake3", "crc8", "crc16", "crc24", "crc32"}
+local algorithm_order = {"md5", "sha1", "sha256", "sha512", "sha512_256", "sha512_224", "sha3_224", "sha3_256", "sha3_384", "sha3_512", "shake128", "shake256", "cshake128", "cshake256", "blake2b", "blake3", "crc8", "crc16", "crc24", "crc32"}
 local backend_labels = {
 	custom = "Custom",
 	native = "Native",
@@ -180,14 +190,23 @@ local workspace_padding
 local result_box_padding
 local hash_workspace
 local hmac_workspace
+local kmac_workspace
 local pbkdf2_workspace
 local sco_snak_workspace
 local sco_reg_workspace
 local hash_input_box
 local hash_output_length_box
 local hash_output_length_field
+local hash_function_name_box
+local hash_function_name_field
+local hash_customization_box
+local hash_customization_field
 local hmac_key_box
 local hmac_message_box
+local kmac_key_box
+local kmac_message_box
+local kmac_customization_box
+local kmac_output_length_box
 local pbkdf2_password_box
 local pbkdf2_salt_box
 local pbkdf2_iterations_box
@@ -211,6 +230,8 @@ local hash_generate_button
 local hash_clear_button
 local hmac_generate_button
 local hmac_clear_button
+local kmac_generate_button
+local kmac_clear_button
 local pbkdf2_generate_button
 local pbkdf2_clear_button
 local sco_snak_generate_button
@@ -219,6 +240,7 @@ local sco_reg_generate_button
 local sco_reg_clear_button
 local shell_padding
 local body_layout
+local hash_action_row
 
 local function make(class_name, properties, parent)
 	local instance = Instance.new(class_name)
@@ -283,13 +305,28 @@ local function is_shake_algorithm(algorithm_key)
 	return algorithm_key == "shake128" or algorithm_key == "shake256"
 end
 
+local function is_cshake_algorithm(algorithm_key)
+	return algorithm_key == "cshake128" or algorithm_key == "cshake256"
+end
+
+local function hash_algorithm_supports_output_length(algorithm_key)
+	return is_shake_algorithm(algorithm_key) or is_cshake_algorithm(algorithm_key)
+end
+
 local function get_default_hash_output_length(algorithm_key)
-	if algorithm_key == "shake256" then
+	if algorithm_key == "shake256" or algorithm_key == "cshake256" then
 		return "64"
-	elseif algorithm_key == "shake128" then
+	elseif algorithm_key == "shake128" or algorithm_key == "cshake128" then
 		return "32"
 	end
 	return ""
+end
+
+local function get_default_kmac_output_length(mode_key)
+	if mode_key == "kmac256" then
+		return "64"
+	end
+	return "32"
 end
 
 get_hash_output_length_value = function()
@@ -299,6 +336,14 @@ get_hash_output_length_value = function()
 		return default_length
 	end
 	return length_value
+end
+
+get_hash_function_name_value = function()
+	return hash_function_name_box and hash_function_name_box.Text or ""
+end
+
+get_hash_customization_value = function()
+	return hash_customization_box and hash_customization_box.Text or ""
 end
 
 local function is_native_backend_supported(algorithm_key)
@@ -607,6 +652,8 @@ do
 	local mode_options = {
 		{key = "hash", label = "Hash"},
 		{key = "hmac", label = "HMAC"},
+		{key = "kmac128", label = "KMAC128"},
+		{key = "kmac256", label = "KMAC256"},
 		{key = "pbkdf2", label = "PBKDF2"},
 		{key = "sco_snak", label = "SCO SNAK"},
 		{key = "sco_reg", label = "SCO Reg"},
@@ -805,26 +852,40 @@ end
 create_divider(workspace, 2)
 
 do
-	hash_workspace = create_section_frame(workspace, 3, 236)
+	hash_workspace = create_section_frame(workspace, 3, 228)
 	local _, hash_input = create_field(hash_workspace, "Input", "Type or paste text to hash", true, 104, false)
 	hash_input_box = hash_input
 	hash_input.Position = UDim2.new(0, 0, 0, 0)
 	local hash_options_row = make("Frame", {
 		BackgroundTransparency = 1,
 		Position = UDim2.new(0, 0, 0, 126),
-		Size = UDim2.new(1, 0, 0, 60),
+		Size = UDim2.new(1, 0, 0, 198),
 	}, hash_workspace)
 	hash_output_length_field = make("Frame", {
 		BackgroundTransparency = 1,
-		Size = UDim2.new(0.5, -6, 1, 0),
+		Size = UDim2.new(0.5, -6, 0, 60),
 		Visible = false,
 	}, hash_options_row)
 	local _, output_length_box = create_field(hash_output_length_field, "Output bytes", "32", false, 40, false)
 	hash_output_length_box = output_length_box
 	hash_output_length_box.Text = "32"
-	local hash_action_row = make("Frame", {
+	hash_function_name_field = make("Frame", {
 		BackgroundTransparency = 1,
-		Position = UDim2.new(0, 0, 1, -36),
+		Size = UDim2.new(1, 0, 0, 60),
+		Visible = false,
+	}, hash_options_row)
+	local _, function_name_box = create_field(hash_function_name_field, "Function name", "Optional: app name", false, 40, false)
+	hash_function_name_box = function_name_box
+	hash_customization_field = make("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 60),
+		Visible = false,
+	}, hash_options_row)
+	local _, customization_box = create_field(hash_customization_field, "Customization", "Optional: domain string", false, 40, false)
+	hash_customization_box = customization_box
+	hash_action_row = make("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 0, 0, 192),
 		Size = UDim2.new(1, 0, 0, 36),
 	}, hash_workspace)
 	hash_generate_button = create_action_button(hash_action_row, "Generate Hash", true, UDim2.new(0, 164, 1, 0))
@@ -862,7 +923,55 @@ do
 end
 
 do
-	pbkdf2_workspace = create_section_frame(workspace, 5, 238)
+	kmac_workspace = create_section_frame(workspace, 5, 322)
+	local kmac_fields = make("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 256),
+	}, kmac_workspace)
+	local kmac_key_field = make("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 78),
+	}, kmac_fields)
+	local _, kmac_key_input = create_field(kmac_key_field, "Key", "Enter secret key", false, 40, true)
+	kmac_key_box = kmac_key_input
+	local kmac_message_field = make("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 0, 0, 88),
+		Size = UDim2.new(1, 0, 0, 98),
+	}, kmac_fields)
+	local _, kmac_message_input = create_field(kmac_message_field, "Message", "Type or paste text to authenticate", true, 90, false)
+	kmac_message_box = kmac_message_input
+	local kmac_options_row = make("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 0, 0, 196),
+		Size = UDim2.new(1, 0, 0, 60),
+	}, kmac_fields)
+	local kmac_custom_field = make("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(0.68, -6, 1, 0),
+	}, kmac_options_row)
+	local _, kmac_custom_input = create_field(kmac_custom_field, "Customization", "Optional: domain string", false, 40, false)
+	kmac_customization_box = kmac_custom_input
+	local kmac_output_field = make("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0.68, 6, 0, 0),
+		Size = UDim2.new(0.32, -6, 1, 0),
+	}, kmac_options_row)
+	local _, kmac_length_input = create_field(kmac_output_field, "Output bytes", "32", false, 40, false)
+	kmac_output_length_box = kmac_length_input
+	kmac_output_length_box.Text = "32"
+	local kmac_action_row = make("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 0, 1, -36),
+		Size = UDim2.new(1, 0, 0, 36),
+	}, kmac_workspace)
+	kmac_generate_button = create_action_button(kmac_action_row, "Generate KMAC", true, UDim2.new(0, 164, 1, 0))
+	kmac_clear_button = create_action_button(kmac_action_row, "Clear", false, UDim2.new(0, 110, 1, 0))
+	kmac_clear_button.Position = UDim2.new(0, 174, 0, 0)
+end
+
+do
+	pbkdf2_workspace = create_section_frame(workspace, 6, 238)
 	local pbkdf2_fields = make("Frame", {
 		BackgroundTransparency = 1,
 		Size = UDim2.new(1, 0, 0, 172),
@@ -915,7 +1024,7 @@ do
 end
 
 do
-	sco_snak_workspace = create_section_frame(workspace, 6, 238)
+	sco_snak_workspace = create_section_frame(workspace, 7, 238)
 	local sco_snak_fields = make("Frame", {
 		BackgroundTransparency = 1,
 		Size = UDim2.new(1, 0, 0, 172),
@@ -962,7 +1071,7 @@ do
 end
 
 do
-	sco_reg_workspace = create_section_frame(workspace, 7, 256)
+	sco_reg_workspace = create_section_frame(workspace, 8, 256)
 	local sco_reg_fields = make("Frame", {
 		BackgroundTransparency = 1,
 		Size = UDim2.new(1, 0, 0, 190),
@@ -1011,10 +1120,10 @@ do
 	sco_reg_clear_button.Position = UDim2.new(0, 174, 0, 0)
 end
 
-create_divider(workspace, 8)
+create_divider(workspace, 9)
 
 do
-	local result_panel = create_section_frame(workspace, 9, 210)
+	local result_panel = create_section_frame(workspace, 10, 210)
 	result_title = make("TextLabel", {
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamSemibold,
@@ -1184,9 +1293,35 @@ local function apply_responsive_layout()
 
 	update_action_button_density(hash_generate_button, hash_clear_button, compact)
 	update_action_button_density(hmac_generate_button, hmac_clear_button, compact)
+	update_action_button_density(kmac_generate_button, kmac_clear_button, compact)
 	update_action_button_density(pbkdf2_generate_button, pbkdf2_clear_button, compact)
 	update_action_button_density(sco_snak_generate_button, sco_snak_clear_button, compact)
 	update_action_button_density(sco_reg_generate_button, sco_reg_clear_button, compact)
+end
+
+local function refresh_hash_workspace_layout()
+	local supports_output_length = current_mode == "hash" and hash_algorithm_supports_output_length(current_algorithm)
+	local supports_cshake = current_mode == "hash" and is_cshake_algorithm(current_algorithm)
+	local current_y = 126
+
+	hash_output_length_field.Visible = supports_output_length
+	hash_function_name_field.Visible = supports_cshake
+	hash_customization_field.Visible = supports_cshake
+
+	if supports_output_length then
+		hash_output_length_field.Position = UDim2.new(0, 0, 0, current_y)
+		current_y += 66
+	end
+
+	if supports_cshake then
+		hash_function_name_field.Position = UDim2.new(0, 0, 0, current_y)
+		current_y += 66
+		hash_customization_field.Position = UDim2.new(0, 0, 0, current_y)
+		current_y += 66
+	end
+
+	hash_action_row.Position = UDim2.new(0, 0, 0, current_y)
+	hash_workspace.Size = UDim2.new(1, 0, 0, current_y + 36)
 end
 
 local function get_current_mode_config()
@@ -1271,10 +1406,10 @@ local function run_hash_mode()
 		return
 	end
 
-	if is_shake_algorithm(current_algorithm) then
+	if hash_algorithm_supports_output_length(current_algorithm) then
 		local output_length = tonumber(hash_output_length_box.Text or "")
 		if not output_length or output_length ~= math.floor(output_length) or output_length <= 0 then
-			show_error("SHAKE output bytes must be a positive integer.", "Length required")
+			show_error("Output bytes must be a positive integer.", "Length required")
 			return
 		end
 	end
@@ -1312,6 +1447,34 @@ local function run_hmac_mode()
 	end
 
 	show_success(mac_value, "MAC ready")
+end
+
+local function run_kmac_mode()
+	local key_text = kmac_key_box.Text or ""
+	local message_text = kmac_message_box.Text or ""
+	local customization_text = kmac_customization_box.Text or ""
+	local output_length = tonumber(kmac_output_length_box.Text or "")
+
+	if key_text == "" then
+		show_error("Please enter a KMAC key.", "Key required")
+		return
+	end
+
+	if not output_length or output_length ~= math.floor(output_length) or output_length <= 0 then
+		show_error("KMAC output bytes must be a positive integer.", "Length required")
+		return
+	end
+
+	local kmac_fn = current_mode == "kmac256" and sha3_module.kmac256 or sha3_module.kmac128
+	local ok, mac_value = pcall(function()
+		return kmac_fn(key_text, message_text, output_length, customization_text)
+	end)
+	if not ok then
+		show_error("KMAC failed: " .. tostring(mac_value), "KMAC error")
+		return
+	end
+
+	show_success(mac_value, "KMAC ready")
 end
 
 local function run_pbkdf2_mode()
@@ -1395,7 +1558,7 @@ mode_configs = {
 		show_digest_section = false,
 		get_result_meta = function()
 			local base = get_algorithm_label(current_algorithm) .. "  |  " .. get_backend_label(current_backend_mode) .. " backend"
-			if is_shake_algorithm(current_algorithm) then
+			if hash_algorithm_supports_output_length(current_algorithm) then
 				base = base .. "  |  " .. tostring(get_hash_output_length_value()) .. " output bytes"
 			end
 			if current_result_value ~= "" then
@@ -1410,13 +1573,15 @@ mode_configs = {
 			return get_backend_label(current_backend_mode)
 		end,
 		apply_defaults = function()
-			if is_shake_algorithm(current_algorithm) and hash_output_length_box.Text == "" then
+			if hash_algorithm_supports_output_length(current_algorithm) and hash_output_length_box.Text == "" then
 				hash_output_length_box.Text = get_default_hash_output_length(current_algorithm)
 			end
 		end,
 		clear_fields = function()
 			hash_input_box.Text = ""
 			hash_output_length_box.Text = get_default_hash_output_length(current_algorithm)
+			hash_function_name_box.Text = ""
+			hash_customization_box.Text = ""
 		end,
 		run = run_hash_mode,
 	},
@@ -1451,6 +1616,84 @@ mode_configs = {
 			hmac_message_box.Text = ""
 		end,
 		run = run_hmac_mode,
+	},
+	kmac128 = {
+		title = "KMAC128",
+		subtitle = "Generate a keyed sponge MAC using KMAC128 with an optional customization string and configurable output length.",
+		output_title = "KMAC",
+		ready_text = "KMAC128 ready",
+		summary_mode = "KMAC128",
+		workspace = kmac_workspace,
+		show_algorithm_section = false,
+		show_backend_section = false,
+		show_digest_section = false,
+		get_result_meta = function()
+			local base = "KMAC128  |  " .. tostring(tonumber(kmac_output_length_box.Text or "") or 32) .. " output bytes"
+			if kmac_customization_box.Text ~= "" then
+				base = base .. "  |  customized"
+			end
+			if current_result_value ~= "" then
+				return base .. "  |  " .. tostring(#current_result_value) .. " chars"
+			end
+			return base
+		end,
+		get_summary_target = function()
+			return "Keyed sponge MAC"
+		end,
+		get_summary_engine = function()
+			return "cSHAKE128"
+		end,
+		apply_defaults = function()
+			if kmac_output_length_box.Text == "" then
+				kmac_output_length_box.Text = get_default_kmac_output_length("kmac128")
+			end
+		end,
+		clear_fields = function()
+			kmac_key_box.Text = ""
+			kmac_message_box.Text = ""
+			kmac_customization_box.Text = ""
+			kmac_output_length_box.Text = get_default_kmac_output_length("kmac128")
+		end,
+		run = run_kmac_mode,
+	},
+	kmac256 = {
+		title = "KMAC256",
+		subtitle = "Generate a keyed sponge MAC using KMAC256 with an optional customization string and configurable output length.",
+		output_title = "KMAC",
+		ready_text = "KMAC256 ready",
+		summary_mode = "KMAC256",
+		workspace = kmac_workspace,
+		show_algorithm_section = false,
+		show_backend_section = false,
+		show_digest_section = false,
+		get_result_meta = function()
+			local base = "KMAC256  |  " .. tostring(tonumber(kmac_output_length_box.Text or "") or 64) .. " output bytes"
+			if kmac_customization_box.Text ~= "" then
+				base = base .. "  |  customized"
+			end
+			if current_result_value ~= "" then
+				return base .. "  |  " .. tostring(#current_result_value) .. " chars"
+			end
+			return base
+		end,
+		get_summary_target = function()
+			return "Keyed sponge MAC"
+		end,
+		get_summary_engine = function()
+			return "cSHAKE256"
+		end,
+		apply_defaults = function()
+			if kmac_output_length_box.Text == "" then
+				kmac_output_length_box.Text = get_default_kmac_output_length("kmac256")
+			end
+		end,
+		clear_fields = function()
+			kmac_key_box.Text = ""
+			kmac_message_box.Text = ""
+			kmac_customization_box.Text = ""
+			kmac_output_length_box.Text = get_default_kmac_output_length("kmac256")
+		end,
+		run = run_kmac_mode,
 	},
 	pbkdf2 = {
 		title = "PBKDF2",
@@ -1604,8 +1847,18 @@ local function refresh_selectors()
 end
 
 local function refresh_visibility()
+	local workspace_visibility = {}
 	for mode_key, config in pairs(mode_configs) do
-		config.workspace.Visible = mode_key == current_mode
+		if workspace_visibility[config.workspace] == nil then
+			workspace_visibility[config.workspace] = false
+		end
+		if mode_key == current_mode then
+			workspace_visibility[config.workspace] = true
+		end
+	end
+
+	for workspace_instance, is_visible in pairs(workspace_visibility) do
+		workspace_instance.Visible = is_visible
 	end
 
 	local config = get_current_mode_config()
@@ -1613,7 +1866,7 @@ local function refresh_visibility()
 	sidebar_algorithm_section.Visible = config.show_algorithm_section
 	sidebar_backend_section.Visible = config.show_backend_section
 	sidebar_digest_section.Visible = config.show_digest_section
-	hash_output_length_field.Visible = current_mode == "hash" and is_shake_algorithm(current_algorithm)
+	refresh_hash_workspace_layout()
 	for digest_key, row in pairs(digest_rows) do
 		row.Visible = config.show_digest_section and mode_allows_digest(config, digest_key)
 	end
@@ -1636,7 +1889,15 @@ local function apply_mode(mode_key)
 		return
 	end
 
+	local previous_mode = current_mode
 	current_mode = mode_key
+	if mode_key == "kmac128" or mode_key == "kmac256" then
+		local previous_default = get_default_kmac_output_length(previous_mode)
+		local next_default = get_default_kmac_output_length(mode_key)
+		if kmac_output_length_box.Text == "" or kmac_output_length_box.Text == previous_default then
+			kmac_output_length_box.Text = next_default
+		end
+	end
 	config.apply_defaults()
 	clear_output(config.ready_text, palette.success)
 	sync_shell()
@@ -1747,6 +2008,7 @@ bind_click_map(backend_rows, apply_backend_mode)
 for _, button in ipairs({
 	hash_generate_button,
 	hmac_generate_button,
+	kmac_generate_button,
 	pbkdf2_generate_button,
 	sco_snak_generate_button,
 	sco_reg_generate_button,
@@ -1757,6 +2019,7 @@ end
 for _, button in ipairs({
 	hash_clear_button,
 	hmac_clear_button,
+	kmac_clear_button,
 	pbkdf2_clear_button,
 	sco_snak_clear_button,
 	sco_reg_clear_button,
@@ -1766,8 +2029,18 @@ end
 
 bind_submit_on_enter(hash_input_box, "hash")
 bind_submit_on_enter(hash_output_length_box, "hash")
+bind_submit_on_enter(hash_function_name_box, "hash")
+bind_submit_on_enter(hash_customization_box, "hash")
 bind_submit_on_enter(hmac_key_box, "hmac")
 bind_submit_on_enter(hmac_message_box, "hmac")
+bind_submit_on_enter(kmac_key_box, "kmac128")
+bind_submit_on_enter(kmac_message_box, "kmac128")
+bind_submit_on_enter(kmac_customization_box, "kmac128")
+bind_submit_on_enter(kmac_output_length_box, "kmac128")
+bind_submit_on_enter(kmac_key_box, "kmac256")
+bind_submit_on_enter(kmac_message_box, "kmac256")
+bind_submit_on_enter(kmac_customization_box, "kmac256")
+bind_submit_on_enter(kmac_output_length_box, "kmac256")
 bind_submit_on_enter(pbkdf2_password_box, "pbkdf2")
 bind_submit_on_enter(pbkdf2_salt_box, "pbkdf2")
 bind_submit_on_enter(pbkdf2_iterations_box, "pbkdf2")

@@ -13,10 +13,13 @@ local rshift = bit32.rshift
 local lshift = bit32.lshift
 local byte = string.byte
 local concat = table.concat
+local rep = string.rep
+local unpack = table.unpack
 
 local MASK32 = 0xFFFFFFFF
 local SHA3_SUFFIX = 0x06
 local SHAKE_SUFFIX = 0x1F
+local CSHAKE_SUFFIX = 0x04
 
 local RHO = {
 	0, 1, 62, 28, 27,
@@ -47,6 +50,86 @@ local RC_HI = {
 local HEX = table.create(256)
 for value = 0, 255 do
 	HEX[value] = string.format("%02x", value)
+end
+
+local function bytes_to_string(bytes)
+	if #bytes == 0 then
+		return ""
+	end
+
+	local parts = table.create(math.ceil(#bytes / 96))
+	local part_index = 1
+	for start_index = 1, #bytes, 96 do
+		local finish_index = math.min(start_index + 95, #bytes)
+		parts[part_index] = string.char(unpack(bytes, start_index, finish_index))
+		part_index += 1
+	end
+	return concat(parts)
+end
+
+local function left_encode(value)
+	if type(value) ~= "number" or value ~= math.floor(value) or value < 0 then
+		error("SP800-185 integer must be a non-negative integer", 2)
+	end
+
+	local body = table.create(9)
+	local body_len = 0
+	repeat
+		body_len += 1
+		body[body_len] = value % 256
+		value = math.floor(value / 256)
+	until value == 0
+
+	local out = table.create(body_len + 1)
+	out[1] = body_len
+	for index = 1, body_len do
+		out[index + 1] = body[body_len - index + 1]
+	end
+	return bytes_to_string(out)
+end
+
+local function right_encode(value)
+	if type(value) ~= "number" or value ~= math.floor(value) or value < 0 then
+		error("SP800-185 integer must be a non-negative integer", 2)
+	end
+
+	local body = table.create(9)
+	local body_len = 0
+	repeat
+		body_len += 1
+		body[body_len] = value % 256
+		value = math.floor(value / 256)
+	until value == 0
+
+	local out = table.create(body_len + 1)
+	for index = 1, body_len do
+		out[index] = body[body_len - index + 1]
+	end
+	out[body_len + 1] = body_len
+	return bytes_to_string(out)
+end
+
+local function encode_string(text)
+	if type(text) ~= "string" then
+		error("SP800-185 string input must be a string", 2)
+	end
+	return left_encode(#text * 8) .. text
+end
+
+local function bytepad(text, width)
+	if type(text) ~= "string" then
+		error("SP800-185 bytepad input must be a string", 2)
+	end
+	if type(width) ~= "number" or width ~= math.floor(width) or width <= 0 then
+		error("SP800-185 bytepad width must be a positive integer", 2)
+	end
+
+	local encoded = left_encode(width) .. text
+	local pad_len = (width - (#encoded % width)) % width
+	if pad_len == 0 then
+		return encoded
+	end
+	return encoded .. rep("\0", pad_len)
 end
 
 local function u32(value)
@@ -296,6 +379,38 @@ local function shake_bytes(message, rate_bytes, output_bytes)
 	return squeeze_bytes(state_lo, state_hi, rate_words, output_bytes)
 end
 
+local function cshake_hex(message, rate_bytes, output_bytes, function_name, customization)
+	if type(function_name) ~= "string" then
+		error("cSHAKE function name must be a string", 2)
+	end
+	if type(customization) ~= "string" then
+		error("cSHAKE customization must be a string", 2)
+	end
+	if function_name == "" and customization == "" then
+		return shake_hex(message, rate_bytes, output_bytes)
+	end
+
+	local prefix = bytepad(encode_string(function_name) .. encode_string(customization), rate_bytes)
+	local state_lo, state_hi, rate_words = absorb_sponge(prefix .. message, rate_bytes, CSHAKE_SUFFIX)
+	return squeeze_hex(state_lo, state_hi, rate_words, output_bytes)
+end
+
+local function cshake_bytes(message, rate_bytes, output_bytes, function_name, customization)
+	if type(function_name) ~= "string" then
+		error("cSHAKE function name must be a string", 2)
+	end
+	if type(customization) ~= "string" then
+		error("cSHAKE customization must be a string", 2)
+	end
+	if function_name == "" and customization == "" then
+		return shake_bytes(message, rate_bytes, output_bytes)
+	end
+
+	local prefix = bytepad(encode_string(function_name) .. encode_string(customization), rate_bytes)
+	local state_lo, state_hi, rate_words = absorb_sponge(prefix .. message, rate_bytes, CSHAKE_SUFFIX)
+	return squeeze_bytes(state_lo, state_hi, rate_words, output_bytes)
+end
+
 local function sha3_224_hex(message)
 	return sha3_hex(message, 144, 28)
 end
@@ -344,6 +459,74 @@ local function shake256_bytes(message, output_bytes)
 	return shake_bytes(message, 136, output_bytes)
 end
 
+local function cshake128_hex(message, output_bytes, function_name, customization)
+	return cshake_hex(message, 168, output_bytes, function_name or "", customization or "")
+end
+
+local function cshake256_hex(message, output_bytes, function_name, customization)
+	return cshake_hex(message, 136, output_bytes, function_name or "", customization or "")
+end
+
+local function cshake128_bytes(message, output_bytes, function_name, customization)
+	return cshake_bytes(message, 168, output_bytes, function_name or "", customization or "")
+end
+
+local function cshake256_bytes(message, output_bytes, function_name, customization)
+	return cshake_bytes(message, 136, output_bytes, function_name or "", customization or "")
+end
+
+local function kmac_hex(rate_bytes, key, message, output_bytes, customization)
+	if type(key) ~= "string" then
+		error("KMAC key must be a string", 2)
+	end
+	if type(message) ~= "string" then
+		error("KMAC message must be a string", 2)
+	end
+	if type(customization) ~= "string" then
+		error("KMAC customization must be a string", 2)
+	end
+	if type(output_bytes) ~= "number" or output_bytes ~= math.floor(output_bytes) or output_bytes <= 0 then
+		error("KMAC output length must be a positive integer", 2)
+	end
+
+	local encoded_input = bytepad(encode_string(key), rate_bytes) .. message .. right_encode(output_bytes * 8)
+	return cshake_hex(encoded_input, rate_bytes, output_bytes, "KMAC", customization)
+end
+
+local function kmac_bytes(rate_bytes, key, message, output_bytes, customization)
+	if type(key) ~= "string" then
+		error("KMAC key must be a string", 2)
+	end
+	if type(message) ~= "string" then
+		error("KMAC message must be a string", 2)
+	end
+	if type(customization) ~= "string" then
+		error("KMAC customization must be a string", 2)
+	end
+	if type(output_bytes) ~= "number" or output_bytes ~= math.floor(output_bytes) or output_bytes <= 0 then
+		error("KMAC output length must be a positive integer", 2)
+	end
+
+	local encoded_input = bytepad(encode_string(key), rate_bytes) .. message .. right_encode(output_bytes * 8)
+	return cshake_bytes(encoded_input, rate_bytes, output_bytes, "KMAC", customization)
+end
+
+local function kmac128_hex(key, message, output_bytes, customization)
+	return kmac_hex(168, key, message, output_bytes, customization or "")
+end
+
+local function kmac256_hex(key, message, output_bytes, customization)
+	return kmac_hex(136, key, message, output_bytes, customization or "")
+end
+
+local function kmac128_bytes(key, message, output_bytes, customization)
+	return kmac_bytes(168, key, message, output_bytes, customization or "")
+end
+
+local function kmac256_bytes(key, message, output_bytes, customization)
+	return kmac_bytes(136, key, message, output_bytes, customization or "")
+end
+
 local algorithms = {
 	sha3_224 = sha3_224_hex,
 	sha3_256 = sha3_256_hex,
@@ -354,6 +537,12 @@ local algorithms = {
 	end,
 	shake256 = function(message)
 		return shake256_hex(message, 64)
+	end,
+	cshake128 = function(message)
+		return cshake128_hex(message, 32, "", "")
+	end,
+	cshake256 = function(message)
+		return cshake256_hex(message, 64, "", "")
 	end,
 }
 
@@ -372,5 +561,13 @@ return {
 	shake256 = shake256_hex,
 	shake128_bytes = shake128_bytes,
 	shake256_bytes = shake256_bytes,
+	cshake128 = cshake128_hex,
+	cshake256 = cshake256_hex,
+	cshake128_bytes = cshake128_bytes,
+	cshake256_bytes = cshake256_bytes,
+	kmac128 = kmac128_hex,
+	kmac256 = kmac256_hex,
+	kmac128_bytes = kmac128_bytes,
+	kmac256_bytes = kmac256_bytes,
 	algorithms = algorithms,
 }
