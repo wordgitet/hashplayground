@@ -3,12 +3,17 @@
 -- The entire UI is built in code so Rojo can sync a self-contained utility app without hand-maintained instances.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StarterGui = game:GetService("StarterGui")
 
 local screen_gui = script.Parent
 screen_gui.ResetOnSpawn = false
 screen_gui.IgnoreGuiInset = true
 screen_gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 screen_gui.DisplayOrder = 50
+
+pcall(function()
+	StarterGui.ScreenOrientation = Enum.ScreenOrientation.LandscapeSensor
+end)
 
 local function require_module(name)
 	local ok, module = pcall(require, ReplicatedStorage:WaitForChild(name))
@@ -140,8 +145,16 @@ local sidebar_digest_section
 local sidebar_backend_section
 local backend_note_label
 local native_row
+local sidebar
+local sidebar_inner
+local sidebar_padding
+local sidebar_title_label
+local sidebar_subtitle_label
 local workspace_title
 local workspace_subtitle
+local workspace
+local workspace_padding
+local result_box_padding
 local hash_workspace
 local hmac_workspace
 local pbkdf2_workspace
@@ -179,6 +192,8 @@ local sco_snak_generate_button
 local sco_snak_clear_button
 local sco_reg_generate_button
 local sco_reg_clear_button
+local shell_padding
+local body_layout
 
 local function make(class_name, properties, parent)
 	local instance = Instance.new(class_name)
@@ -205,9 +220,9 @@ local function add_stroke(instance, color, thickness, transparency)
 	}, instance)
 end
 
-local function bind_canvas_size(scroller, layout)
+local function bind_canvas_size(scroller, layout, extra_height)
 	local function update_canvas()
-		scroller.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 4)
+		scroller.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + (extra_height or 4))
 	end
 	layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(update_canvas)
 	update_canvas()
@@ -452,7 +467,7 @@ local shell = make("Frame", {
 	Position = UDim2.new(0, 0, 0, 2),
 	Size = UDim2.new(1, 0, 1, -2),
 }, root)
-make("UIPadding", {
+shell_padding = make("UIPadding", {
 	PaddingBottom = UDim.new(0, 10),
 	PaddingLeft = UDim.new(0, 10),
 	PaddingRight = UDim.new(0, 10),
@@ -464,7 +479,7 @@ local body = make("Frame", {
 	BorderSizePixel = 0,
 	Size = UDim2.fromScale(1, 1),
 }, shell)
-make("UIListLayout", {
+body_layout = make("UIListLayout", {
 	FillDirection = Enum.FillDirection.Horizontal,
 	Padding = UDim.new(0, 10),
 	SortOrder = Enum.SortOrder.LayoutOrder,
@@ -481,7 +496,7 @@ local function create_divider(parent, layout_order)
 	}, parent)
 end
 
-local sidebar = make("Frame", {
+sidebar = make("Frame", {
 	BackgroundColor3 = palette.sidebar,
 	BorderSizePixel = 0,
 	LayoutOrder = 1,
@@ -490,28 +505,35 @@ local sidebar = make("Frame", {
 add_corner(sidebar, 2)
 add_stroke(sidebar, palette.border, 1, 0.7)
 
-local sidebar_inner = make("Frame", {
+sidebar_inner = make("ScrollingFrame", {
+	Active = true,
+	AutomaticCanvasSize = Enum.AutomaticSize.None,
 	BackgroundTransparency = 1,
 	BorderSizePixel = 0,
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+	ScrollBarImageColor3 = palette.border,
+	ScrollBarThickness = 4,
+	ScrollingDirection = Enum.ScrollingDirection.Y,
 	Size = UDim2.fromScale(1, 1),
 }, sidebar)
-make("UIPadding", {
+sidebar_padding = make("UIPadding", {
 	PaddingBottom = UDim.new(0, 14),
 	PaddingLeft = UDim.new(0, 14),
 	PaddingRight = UDim.new(0, 14),
 	PaddingTop = UDim.new(0, 14),
 }, sidebar_inner)
-make("UIListLayout", {
+local sidebar_layout = make("UIListLayout", {
 	Padding = UDim.new(0, 10),
 	SortOrder = Enum.SortOrder.LayoutOrder,
 }, sidebar_inner)
+bind_canvas_size(sidebar_inner, sidebar_layout, 32)
 
 local sidebar_header = make("Frame", {
 	BackgroundTransparency = 1,
 	LayoutOrder = 1,
 	Size = UDim2.new(1, 0, 0, 62),
 }, sidebar_inner)
-make("TextLabel", {
+sidebar_title_label = make("TextLabel", {
 	BackgroundTransparency = 1,
 	Font = Enum.Font.GothamSemibold,
 	Size = UDim2.new(1, 0, 0, 26),
@@ -520,7 +542,7 @@ make("TextLabel", {
 	TextSize = 20,
 	TextXAlignment = Enum.TextXAlignment.Left,
 }, sidebar_header)
-make("TextLabel", {
+sidebar_subtitle_label = make("TextLabel", {
 	BackgroundTransparency = 1,
 	Font = Enum.Font.GothamMedium,
 	Position = UDim2.new(0, 0, 0, 28),
@@ -683,24 +705,31 @@ do
 	summary_engine_value = create_summary_row(summary_holder, 3, "Engine")
 end
 
-local workspace = make("Frame", {
+workspace = make("ScrollingFrame", {
+	Active = true,
+	AutomaticCanvasSize = Enum.AutomaticSize.None,
 	BackgroundColor3 = palette.panel,
 	BorderSizePixel = 0,
+	CanvasSize = UDim2.new(0, 0, 0, 0),
 	LayoutOrder = 2,
+	ScrollBarImageColor3 = palette.border,
+	ScrollBarThickness = 4,
+	ScrollingDirection = Enum.ScrollingDirection.Y,
 	Size = UDim2.new(1, -242, 1, 0),
 }, body)
 add_corner(workspace, 2)
 add_stroke(workspace, palette.border, 1, 0.72)
-make("UIPadding", {
+workspace_padding = make("UIPadding", {
 	PaddingBottom = UDim.new(0, 16),
 	PaddingLeft = UDim.new(0, 16),
 	PaddingRight = UDim.new(0, 16),
 	PaddingTop = UDim.new(0, 14),
 }, workspace)
-make("UIListLayout", {
+local workspace_layout = make("UIListLayout", {
 	Padding = UDim.new(0, 12),
 	SortOrder = Enum.SortOrder.LayoutOrder,
 }, workspace)
+bind_canvas_size(workspace, workspace_layout, 36)
 
 do
 	local header_panel = create_section_frame(workspace, 1, 58)
@@ -963,7 +992,7 @@ do
 	}, result_panel)
 	add_corner(result_box, 3)
 	add_stroke(result_box, palette.border, 1, 0.72)
-	make("UIPadding", {
+	result_box_padding = make("UIPadding", {
 		PaddingBottom = UDim.new(0, 12),
 		PaddingLeft = UDim.new(0, 12),
 		PaddingRight = UDim.new(0, 12),
@@ -1018,6 +1047,86 @@ local function mode_allows_digest(config, digest_key)
 		return false
 	end
 	return table.find(allowed_digests, digest_key) ~= nil
+end
+
+local function update_row_button_density(rows, compact)
+	for _, row in pairs(rows) do
+		row.Size = UDim2.new(1, 0, 0, compact and 28 or 32)
+
+		local label = row:FindFirstChild("label")
+		if label and label:IsA("TextLabel") then
+			label.TextSize = compact and 11 or 12
+		end
+
+		local accent = row:FindFirstChild("accent")
+		if accent and accent:IsA("Frame") then
+			accent.Size = UDim2.new(0, 3, 0, compact and 14 or 16)
+		end
+	end
+end
+
+local function update_action_button_density(primary_button, secondary_button, compact)
+	local primary_width = compact and 144 or 164
+	local secondary_width = compact and 96 or 110
+	primary_button.Size = UDim2.new(0, primary_width, 1, 0)
+	secondary_button.Size = UDim2.new(0, secondary_width, 1, 0)
+	secondary_button.Position = UDim2.new(0, primary_width + 10, 0, 0)
+
+	primary_button.TextSize = compact and 13 or 14
+	secondary_button.TextSize = compact and 13 or 14
+end
+
+local function apply_responsive_layout()
+	local viewport_size = root.AbsoluteSize
+	local compact = viewport_size.X > viewport_size.Y and (viewport_size.X <= 760 or viewport_size.Y <= 430)
+	local shell_inset = compact and 6 or 10
+	local column_gap = compact and 6 or 10
+	local sidebar_width = compact and math.clamp(math.floor(viewport_size.X * 0.29), 164, 188) or 232
+	local sidebar_inset = compact and 10 or 14
+	local workspace_inset = compact and 12 or 16
+
+	shell_padding.PaddingTop = UDim.new(0, shell_inset)
+	shell_padding.PaddingRight = UDim.new(0, shell_inset)
+	shell_padding.PaddingBottom = UDim.new(0, shell_inset)
+	shell_padding.PaddingLeft = UDim.new(0, shell_inset)
+	body_layout.Padding = UDim.new(0, column_gap)
+
+	sidebar.Size = UDim2.new(0, sidebar_width, 1, 0)
+	workspace.Size = UDim2.new(1, -(sidebar_width + column_gap), 1, 0)
+
+	sidebar_padding.PaddingTop = UDim.new(0, sidebar_inset)
+	sidebar_padding.PaddingRight = UDim.new(0, sidebar_inset)
+	sidebar_padding.PaddingBottom = UDim.new(0, sidebar_inset)
+	sidebar_padding.PaddingLeft = UDim.new(0, sidebar_inset)
+
+	workspace_padding.PaddingTop = UDim.new(0, compact and 12 or 14)
+	workspace_padding.PaddingRight = UDim.new(0, workspace_inset)
+	workspace_padding.PaddingBottom = UDim.new(0, workspace_inset)
+	workspace_padding.PaddingLeft = UDim.new(0, workspace_inset)
+
+	result_box_padding.PaddingTop = UDim.new(0, compact and 8 or 10)
+	result_box_padding.PaddingRight = UDim.new(0, compact and 10 or 12)
+	result_box_padding.PaddingBottom = UDim.new(0, compact and 10 or 12)
+	result_box_padding.PaddingLeft = UDim.new(0, compact and 10 or 12)
+
+	sidebar_title_label.TextSize = compact and 16 or 20
+	sidebar_subtitle_label.TextSize = compact and 9 or 11
+	workspace_title.TextSize = compact and 18 or 22
+	workspace_subtitle.TextSize = compact and 11 or 12
+	result_meta_label.TextSize = compact and 10 or 11
+	result_box.TextSize = compact and 13 or 14
+	status_label.TextSize = compact and 10 or 11
+
+	update_row_button_density(mode_rows, compact)
+	update_row_button_density(algorithm_rows, compact)
+	update_row_button_density(digest_rows, compact)
+	update_row_button_density(backend_rows, compact)
+
+	update_action_button_density(hash_generate_button, hash_clear_button, compact)
+	update_action_button_density(hmac_generate_button, hmac_clear_button, compact)
+	update_action_button_density(pbkdf2_generate_button, pbkdf2_clear_button, compact)
+	update_action_button_density(sco_snak_generate_button, sco_snak_clear_button, compact)
+	update_action_button_density(sco_reg_generate_button, sco_reg_clear_button, compact)
 end
 
 local function get_current_mode_config()
@@ -1437,6 +1546,7 @@ local function refresh_visibility()
 end
 
 local function sync_shell()
+	apply_responsive_layout()
 	refresh_header()
 	refresh_summary()
 	refresh_selectors()
@@ -1583,6 +1693,8 @@ bind_submit_on_enter(sco_license_box, "sco_snak")
 bind_submit_on_enter(sco_reg_serial_box, "sco_reg")
 bind_submit_on_enter(sco_host_id_box, "sco_reg")
 bind_submit_on_enter(sco_reglock_box, "sco_reg")
+
+root:GetPropertyChangedSignal("AbsoluteSize"):Connect(sync_shell)
 
 sync_shell()
 clear_output("Ready", palette.success)
