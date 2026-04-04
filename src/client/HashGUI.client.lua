@@ -623,12 +623,13 @@ bind_canvas_size(sidebar_inner, sidebar_layout, 32)
 local sidebar_header = make("Frame", {
 	BackgroundTransparency = 1,
 	LayoutOrder = 1,
-	Size = UDim2.new(1, 0, 0, 62),
+	Size = UDim2.new(1, 0, 0, 98),
 }, sidebar_inner)
 sidebar_title_label = make("TextLabel", {
 	BackgroundTransparency = 1,
 	Font = Enum.Font.GothamSemibold,
-	Size = UDim2.new(1, 0, 0, 26),
+	Position = UDim2.new(0, 0, 0, 38),
+	Size = UDim2.new(1, 0, 0, 24),
 	Text = "Checksum Playground",
 	TextColor3 = palette.text,
 	TextSize = 20,
@@ -637,7 +638,7 @@ sidebar_title_label = make("TextLabel", {
 sidebar_subtitle_label = make("TextLabel", {
 	BackgroundTransparency = 1,
 	Font = Enum.Font.GothamMedium,
-	Position = UDim2.new(0, 0, 0, 28),
+	Position = UDim2.new(0, 0, 0, 62),
 	Size = UDim2.new(1, 0, 0, 28),
 	Text = "GTK-style utility shell for hashes, key derivation, and SCO licensing tools",
 	TextColor3 = palette.subtle,
