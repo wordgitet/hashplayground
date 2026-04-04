@@ -25,6 +25,7 @@ local sha512_module = require_module("SHA512Module")
 local blake2b_module = require_module("BLAKE2bModule")
 local blake3_module = require_module("BLAKE3Module")
 local crc_module = require_module("CRCModule")
+local hmac_module = require_module("HMACModule")
 local pbkdf2_module = require_module("PBKDF2Module")
 local sco_keygen_module = require_module("SCOKeygenModule")
 
@@ -39,6 +40,12 @@ local hash_suite = {
 	crc16 = crc_module.crc16,
 	crc24 = crc_module.crc24,
 	crc32 = crc_module.crc32,
+}
+
+local hmac_digest_modules = {
+	sha1 = sha1_module,
+	sha256 = sha256_module,
+	sha512 = sha512_module,
 }
 
 local encoding_service = nil
@@ -90,9 +97,11 @@ local backend_labels = {
 	native = "Native",
 }
 local digest_labels = {
+	sha1 = "SHA-1",
 	sha256 = "SHA-256",
 	sha512 = "SHA-512",
 }
+local digest_order = {"sha1", "sha256", "sha512"}
 
 local palette = {
 	background = Color3.fromRGB(42, 42, 46),
@@ -115,6 +124,7 @@ local palette = {
 local current_mode = "hash"
 local current_algorithm = "md5"
 local current_backend_mode = "custom"
+local current_hmac_digest = "sha256"
 local current_pbkdf2_digest = "sha256"
 local current_result_value = ""
 local current_status_text = "Ready"
@@ -129,13 +139,17 @@ local sidebar_algorithm_section
 local sidebar_digest_section
 local sidebar_backend_section
 local backend_note_label
+local native_row
 local workspace_title
 local workspace_subtitle
 local hash_workspace
+local hmac_workspace
 local pbkdf2_workspace
 local sco_snak_workspace
 local sco_reg_workspace
 local hash_input_box
+local hmac_key_box
+local hmac_message_box
 local pbkdf2_password_box
 local pbkdf2_salt_box
 local pbkdf2_iterations_box
@@ -155,6 +169,16 @@ local status_label
 local summary_mode_value
 local summary_target_value
 local summary_engine_value
+local hash_generate_button
+local hash_clear_button
+local hmac_generate_button
+local hmac_clear_button
+local pbkdf2_generate_button
+local pbkdf2_clear_button
+local sco_snak_generate_button
+local sco_snak_clear_button
+local sco_reg_generate_button
+local sco_reg_clear_button
 
 local function make(class_name, properties, parent)
 	local instance = Instance.new(class_name)
@@ -510,114 +534,112 @@ make("TextLabel", {
 }, sidebar_header)
 create_divider(sidebar_inner, 2)
 
-local mode_section = create_section_frame(sidebar_inner, 3, 168)
-create_section_label(mode_section, "Mode")
-local mode_rows_holder = make("Frame", {
-	BackgroundTransparency = 1,
-	Position = UDim2.new(0, 0, 0, 22),
-	Size = UDim2.new(1, 0, 1, -22),
-}, mode_section)
-make("UIListLayout", {
-	Padding = UDim.new(0, 4),
-	SortOrder = Enum.SortOrder.LayoutOrder,
-}, mode_rows_holder)
-for index, mode_data in ipairs({
-	{key = "hash", label = "Hash"},
-	{key = "pbkdf2", label = "PBKDF2"},
-	{key = "sco_snak", label = "SCO SNAK"},
-	{key = "sco_reg", label = "SCO Reg"},
-}) do
-	local row = create_row_button(mode_rows_holder, mode_data.label, index)
-	local mode_key = mode_data.key
-	mode_rows[mode_key] = row
-end
-create_divider(sidebar_inner, 4)
-
-sidebar_algorithm_section = create_section_frame(sidebar_inner, 5, 252)
-create_section_label(sidebar_algorithm_section, "Algorithms")
-local algorithm_scroller = make("ScrollingFrame", {
-	Active = true,
-	AutomaticCanvasSize = Enum.AutomaticSize.None,
-	BackgroundTransparency = 1,
-	BorderSizePixel = 0,
-	CanvasSize = UDim2.new(0, 0, 0, 0),
-	Position = UDim2.new(0, 0, 0, 22),
-	ScrollBarImageColor3 = palette.border,
-	ScrollBarThickness = 4,
-	Size = UDim2.new(1, 0, 1, -22),
-}, sidebar_algorithm_section)
-local algorithm_rows_holder = make("Frame", {
-	BackgroundTransparency = 1,
-	BorderSizePixel = 0,
-	Size = UDim2.new(1, -6, 0, 0),
-}, algorithm_scroller)
-local algorithm_layout = make("UIListLayout", {
-	Padding = UDim.new(0, 4),
-	SortOrder = Enum.SortOrder.LayoutOrder,
-}, algorithm_rows_holder)
-bind_canvas_size(algorithm_scroller, algorithm_layout)
-for index, algorithm_key in ipairs(algorithm_order) do
-	local row = create_row_button(algorithm_rows_holder, get_algorithm_label(algorithm_key), index)
-	algorithm_rows[algorithm_key] = row
+do
+	local mode_options = {
+		{key = "hash", label = "Hash"},
+		{key = "hmac", label = "HMAC"},
+		{key = "pbkdf2", label = "PBKDF2"},
+		{key = "sco_snak", label = "SCO SNAK"},
+		{key = "sco_reg", label = "SCO Reg"},
+	}
+	local mode_section_height = 22 + (#mode_options * 32) + ((#mode_options - 1) * 4)
+	local mode_section = create_section_frame(sidebar_inner, 3, mode_section_height)
+	create_section_label(mode_section, "Mode")
+	local mode_rows_holder = make("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 0, 0, 22),
+		Size = UDim2.new(1, 0, 1, -22),
+	}, mode_section)
+	make("UIListLayout", {
+		Padding = UDim.new(0, 4),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, mode_rows_holder)
+	for index, mode_data in ipairs(mode_options) do
+		local row = create_row_button(mode_rows_holder, mode_data.label, index)
+		mode_rows[mode_data.key] = row
+	end
+	create_divider(sidebar_inner, 4)
 end
 
-sidebar_digest_section = create_section_frame(sidebar_inner, 6, 92)
-create_section_label(sidebar_digest_section, "Digest")
-local digest_rows_holder = make("Frame", {
-	BackgroundTransparency = 1,
-	Position = UDim2.new(0, 0, 0, 22),
-	Size = UDim2.new(1, 0, 1, -22),
-}, sidebar_digest_section)
-make("UIListLayout", {
-	Padding = UDim.new(0, 4),
-	SortOrder = Enum.SortOrder.LayoutOrder,
-}, digest_rows_holder)
-for index, digest_key in ipairs({"sha256", "sha512"}) do
-	local row = create_row_button(digest_rows_holder, get_digest_label(digest_key), index)
-	digest_rows[digest_key] = row
+do
+	sidebar_algorithm_section = create_section_frame(sidebar_inner, 5, 252)
+	create_section_label(sidebar_algorithm_section, "Algorithms")
+	local algorithm_scroller = make("ScrollingFrame", {
+		Active = true,
+		AutomaticCanvasSize = Enum.AutomaticSize.None,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+		Position = UDim2.new(0, 0, 0, 22),
+		ScrollBarImageColor3 = palette.border,
+		ScrollBarThickness = 4,
+		Size = UDim2.new(1, 0, 1, -22),
+	}, sidebar_algorithm_section)
+	local algorithm_rows_holder = make("Frame", {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Size = UDim2.new(1, -6, 0, 0),
+	}, algorithm_scroller)
+	local algorithm_layout = make("UIListLayout", {
+		Padding = UDim.new(0, 4),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, algorithm_rows_holder)
+	bind_canvas_size(algorithm_scroller, algorithm_layout)
+	for index, algorithm_key in ipairs(algorithm_order) do
+		local row = create_row_button(algorithm_rows_holder, get_algorithm_label(algorithm_key), index)
+		algorithm_rows[algorithm_key] = row
+	end
 end
-create_divider(sidebar_inner, 7)
 
-sidebar_backend_section = create_section_frame(sidebar_inner, 8, 122)
-create_section_label(sidebar_backend_section, "Backend")
-local backend_rows_holder = make("Frame", {
-	BackgroundTransparency = 1,
-	Position = UDim2.new(0, 0, 0, 22),
-	Size = UDim2.new(1, 0, 0, 68),
-}, sidebar_backend_section)
-make("UIListLayout", {
-	Padding = UDim.new(0, 4),
-	SortOrder = Enum.SortOrder.LayoutOrder,
-}, backend_rows_holder)
-local custom_row = create_row_button(backend_rows_holder, "Custom", 1)
-local native_row = create_row_button(backend_rows_holder, "Native", 2)
-backend_rows.custom = custom_row
-backend_rows.native = native_row
-backend_note_label = make("TextLabel", {
-	BackgroundTransparency = 1,
-	Font = Enum.Font.GothamMedium,
-	Position = UDim2.new(0, 0, 0, 92),
-	Size = UDim2.new(1, 0, 0, 24),
-	Text = "Native works with SHA-1, SHA-256, and BLAKE3.",
-	TextColor3 = palette.subtle,
-	TextSize = 10,
-	TextWrapped = true,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	TextYAlignment = Enum.TextYAlignment.Top,
-}, sidebar_backend_section)
-create_divider(sidebar_inner, 9)
+do
+	sidebar_digest_section = create_section_frame(sidebar_inner, 6, 122)
+	create_section_label(sidebar_digest_section, "Digest")
+	local digest_rows_holder = make("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 0, 0, 22),
+		Size = UDim2.new(1, 0, 1, -22),
+	}, sidebar_digest_section)
+	make("UIListLayout", {
+		Padding = UDim.new(0, 4),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, digest_rows_holder)
+	for index, digest_key in ipairs(digest_order) do
+		local row = create_row_button(digest_rows_holder, get_digest_label(digest_key), index)
+		digest_rows[digest_key] = row
+	end
+	create_divider(sidebar_inner, 7)
+end
 
-local summary_section = create_section_frame(sidebar_inner, 10, 98)
-create_section_label(summary_section, "Current State")
-local summary_holder = make("Frame", {
-	BackgroundTransparency = 1,
-	Position = UDim2.new(0, 0, 0, 24),
-	Size = UDim2.new(1, 0, 1, -24),
-}, summary_section)
-make("UIListLayout", {
-	Padding = UDim.new(0, 8),
-	SortOrder = Enum.SortOrder.LayoutOrder,
-}, summary_holder)
+do
+	sidebar_backend_section = create_section_frame(sidebar_inner, 8, 122)
+	create_section_label(sidebar_backend_section, "Backend")
+	local backend_rows_holder = make("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 0, 0, 22),
+		Size = UDim2.new(1, 0, 0, 68),
+	}, sidebar_backend_section)
+	make("UIListLayout", {
+		Padding = UDim.new(0, 4),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, backend_rows_holder)
+	backend_rows.custom = create_row_button(backend_rows_holder, "Custom", 1)
+	native_row = create_row_button(backend_rows_holder, "Native", 2)
+	backend_rows.native = native_row
+	backend_note_label = make("TextLabel", {
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamMedium,
+		Position = UDim2.new(0, 0, 0, 92),
+		Size = UDim2.new(1, 0, 0, 24),
+		Text = "Native works with SHA-1, SHA-256, and BLAKE3.",
+		TextColor3 = palette.subtle,
+		TextSize = 10,
+		TextWrapped = true,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+	}, sidebar_backend_section)
+	create_divider(sidebar_inner, 9)
+end
+
 local function create_summary_row(parent, layout_order, label_text)
 	local row = make("Frame", {
 		BackgroundTransparency = 1,
@@ -644,9 +666,22 @@ local function create_summary_row(parent, layout_order, label_text)
 		TextXAlignment = Enum.TextXAlignment.Left,
 	}, row)
 end
-summary_mode_value = create_summary_row(summary_holder, 1, "Mode")
-summary_target_value = create_summary_row(summary_holder, 2, "Target")
-summary_engine_value = create_summary_row(summary_holder, 3, "Engine")
+do
+	local summary_section = create_section_frame(sidebar_inner, 10, 98)
+	create_section_label(summary_section, "Current State")
+	local summary_holder = make("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 0, 0, 24),
+		Size = UDim2.new(1, 0, 1, -24),
+	}, summary_section)
+	make("UIListLayout", {
+		Padding = UDim.new(0, 8),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, summary_holder)
+	summary_mode_value = create_summary_row(summary_holder, 1, "Mode")
+	summary_target_value = create_summary_row(summary_holder, 2, "Target")
+	summary_engine_value = create_summary_row(summary_holder, 3, "Engine")
+end
 
 local workspace = make("Frame", {
 	BackgroundColor3 = palette.panel,
@@ -667,256 +702,297 @@ make("UIListLayout", {
 	SortOrder = Enum.SortOrder.LayoutOrder,
 }, workspace)
 
-local header_panel = create_section_frame(workspace, 1, 58)
-workspace_title = make("TextLabel", {
-	BackgroundTransparency = 1,
-	Font = Enum.Font.GothamSemibold,
-	Size = UDim2.new(1, 0, 0, 24),
-	Text = "Hash",
-	TextColor3 = palette.text,
-	TextSize = 22,
-	TextXAlignment = Enum.TextXAlignment.Left,
-}, header_panel)
-workspace_subtitle = make("TextLabel", {
-	BackgroundTransparency = 1,
-	Font = Enum.Font.GothamMedium,
-	Position = UDim2.new(0, 0, 0, 26),
-	Size = UDim2.new(1, 0, 0, 28),
-	Text = "Generate a digest from any input string.",
-	TextColor3 = palette.subtle,
-	TextSize = 12,
-	TextWrapped = true,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	TextYAlignment = Enum.TextYAlignment.Top,
-}, header_panel)
+do
+	local header_panel = create_section_frame(workspace, 1, 58)
+	workspace_title = make("TextLabel", {
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamSemibold,
+		Size = UDim2.new(1, 0, 0, 24),
+		Text = "Hash",
+		TextColor3 = palette.text,
+		TextSize = 22,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, header_panel)
+	workspace_subtitle = make("TextLabel", {
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamMedium,
+		Position = UDim2.new(0, 0, 0, 26),
+		Size = UDim2.new(1, 0, 0, 28),
+		Text = "Generate a digest from any input string.",
+		TextColor3 = palette.subtle,
+		TextSize = 12,
+		TextWrapped = true,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+	}, header_panel)
+end
 create_divider(workspace, 2)
 
-hash_workspace = create_section_frame(workspace, 3, 204)
-local _, hash_input = create_field(hash_workspace, "Input", "Type or paste text to hash", true, 118, false)
-hash_input_box = hash_input
-hash_input.Position = UDim2.new(0, 0, 0, 0)
-local hash_action_row = make("Frame", {
-	BackgroundTransparency = 1,
-	Position = UDim2.new(0, 0, 1, -36),
-	Size = UDim2.new(1, 0, 0, 36),
-}, hash_workspace)
-local hash_generate_button = create_action_button(hash_action_row, "Generate Hash", true, UDim2.new(0, 164, 1, 0))
-local hash_clear_button = create_action_button(hash_action_row, "Clear", false, UDim2.new(0, 110, 1, 0))
-hash_clear_button.Position = UDim2.new(0, 174, 0, 0)
+do
+	hash_workspace = create_section_frame(workspace, 3, 204)
+	local _, hash_input = create_field(hash_workspace, "Input", "Type or paste text to hash", true, 118, false)
+	hash_input_box = hash_input
+	hash_input.Position = UDim2.new(0, 0, 0, 0)
+	local hash_action_row = make("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 0, 1, -36),
+		Size = UDim2.new(1, 0, 0, 36),
+	}, hash_workspace)
+	hash_generate_button = create_action_button(hash_action_row, "Generate Hash", true, UDim2.new(0, 164, 1, 0))
+	hash_clear_button = create_action_button(hash_action_row, "Clear", false, UDim2.new(0, 110, 1, 0))
+	hash_clear_button.Position = UDim2.new(0, 174, 0, 0)
+end
 
-pbkdf2_workspace = create_section_frame(workspace, 4, 238)
-local pbkdf2_fields = make("Frame", {
-	BackgroundTransparency = 1,
-	Size = UDim2.new(1, 0, 0, 172),
-}, pbkdf2_workspace)
-local top_row = make("Frame", {
-	BackgroundTransparency = 1,
-	Size = UDim2.new(1, 0, 0, 78),
-}, pbkdf2_fields)
-local password_field = make("Frame", {
-	BackgroundTransparency = 1,
-	Size = UDim2.new(0.5, -6, 1, 0),
-}, top_row)
-local _, password_box = create_field(password_field, "Password", "Enter password", false, 40, true)
-pbkdf2_password_box = password_box
-local salt_field = make("Frame", {
-	BackgroundTransparency = 1,
-	Position = UDim2.new(0.5, 6, 0, 0),
-	Size = UDim2.new(0.5, -6, 1, 0),
-}, top_row)
-local _, salt_box = create_field(salt_field, "Salt", "Enter salt", false, 40, false)
-pbkdf2_salt_box = salt_box
-local bottom_row = make("Frame", {
-	BackgroundTransparency = 1,
-	Position = UDim2.new(0, 0, 0, 88),
-	Size = UDim2.new(1, 0, 0, 78),
-}, pbkdf2_fields)
-local iterations_field = make("Frame", {
-	BackgroundTransparency = 1,
-	Size = UDim2.new(0.5, -6, 1, 0),
-}, bottom_row)
-local _, iterations_box = create_field(iterations_field, "Iterations", "1000", false, 40, false)
-iterations_box.Text = "1000"
-pbkdf2_iterations_box = iterations_box
-local length_field = make("Frame", {
-	BackgroundTransparency = 1,
-	Position = UDim2.new(0.5, 6, 0, 0),
-	Size = UDim2.new(0.5, -6, 1, 0),
-}, bottom_row)
-local _, length_box = create_field(length_field, "Derived key length", "32", false, 40, false)
-length_box.Text = "32"
-pbkdf2_length_box = length_box
-local pbkdf2_action_row = make("Frame", {
-	BackgroundTransparency = 1,
-	Position = UDim2.new(0, 0, 1, -36),
-	Size = UDim2.new(1, 0, 0, 36),
-}, pbkdf2_workspace)
-local pbkdf2_generate_button = create_action_button(pbkdf2_action_row, "Derive Key", true, UDim2.new(0, 164, 1, 0))
-local pbkdf2_clear_button = create_action_button(pbkdf2_action_row, "Clear", false, UDim2.new(0, 110, 1, 0))
-pbkdf2_clear_button.Position = UDim2.new(0, 174, 0, 0)
+do
+	hmac_workspace = create_section_frame(workspace, 4, 252)
+	local hmac_fields = make("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 186),
+	}, hmac_workspace)
+	local hmac_key_field = make("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 78),
+	}, hmac_fields)
+	local _, hmac_key_input = create_field(hmac_key_field, "Key", "Enter secret key", false, 40, true)
+	hmac_key_box = hmac_key_input
+	local hmac_message_field = make("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 0, 0, 88),
+		Size = UDim2.new(1, 0, 0, 98),
+	}, hmac_fields)
+	local _, hmac_message_input = create_field(hmac_message_field, "Message", "Type or paste text to authenticate", true, 90, false)
+	hmac_message_box = hmac_message_input
+	local hmac_action_row = make("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 0, 1, -36),
+		Size = UDim2.new(1, 0, 0, 36),
+	}, hmac_workspace)
+	hmac_generate_button = create_action_button(hmac_action_row, "Generate MAC", true, UDim2.new(0, 164, 1, 0))
+	hmac_clear_button = create_action_button(hmac_action_row, "Clear", false, UDim2.new(0, 110, 1, 0))
+	hmac_clear_button.Position = UDim2.new(0, 174, 0, 0)
+end
 
-sco_snak_workspace = create_section_frame(workspace, 5, 238)
-local sco_snak_fields = make("Frame", {
-	BackgroundTransparency = 1,
-	Size = UDim2.new(1, 0, 0, 172),
-}, sco_snak_workspace)
-local sco_version_row = make("Frame", {
-	BackgroundTransparency = 1,
-	Size = UDim2.new(1, 0, 0, 78),
-}, sco_snak_fields)
-local product_field = make("Frame", {
-	BackgroundTransparency = 1,
-	Size = UDim2.new(1 / 3, -8, 1, 0),
-}, sco_version_row)
-local _, product_id_box = create_field(product_field, "Product ID", "203", false, 40, false)
-sco_product_id_box = product_id_box
-local major_field = make("Frame", {
-	BackgroundTransparency = 1,
-	Position = UDim2.new(1 / 3, 4, 0, 0),
-	Size = UDim2.new(1 / 3, -8, 1, 0),
-}, sco_version_row)
-local _, major_box = create_field(major_field, "Major", "71", false, 40, false)
-sco_major_box = major_box
-local minor_field = make("Frame", {
-	BackgroundTransparency = 1,
-	Position = UDim2.new(2 / 3, 8, 0, 0),
-	Size = UDim2.new(1 / 3, -8, 1, 0),
-}, sco_version_row)
-local _, minor_box = create_field(minor_field, "Minor", "4", false, 40, false)
-sco_minor_box = minor_box
-local license_field = make("Frame", {
-	BackgroundTransparency = 1,
-	Position = UDim2.new(0, 0, 0, 88),
-	Size = UDim2.new(1, 0, 0, 78),
-}, sco_snak_fields)
-local _, license_box = create_field(license_field, "License data", "Optional: c4;u100", false, 40, false)
-sco_license_box = license_box
-local sco_snak_action_row = make("Frame", {
-	BackgroundTransparency = 1,
-	Position = UDim2.new(0, 0, 1, -36),
-	Size = UDim2.new(1, 0, 0, 36),
-}, sco_snak_workspace)
-local sco_snak_generate_button = create_action_button(sco_snak_action_row, "Generate SNAK", true, UDim2.new(0, 164, 1, 0))
-local sco_snak_clear_button = create_action_button(sco_snak_action_row, "Clear", false, UDim2.new(0, 110, 1, 0))
-sco_snak_clear_button.Position = UDim2.new(0, 174, 0, 0)
+do
+	pbkdf2_workspace = create_section_frame(workspace, 5, 238)
+	local pbkdf2_fields = make("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 172),
+	}, pbkdf2_workspace)
+	local top_row = make("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 78),
+	}, pbkdf2_fields)
+	local password_field = make("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(0.5, -6, 1, 0),
+	}, top_row)
+	local _, password_box = create_field(password_field, "Password", "Enter password", false, 40, true)
+	pbkdf2_password_box = password_box
+	local salt_field = make("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0.5, 6, 0, 0),
+		Size = UDim2.new(0.5, -6, 1, 0),
+	}, top_row)
+	local _, salt_box = create_field(salt_field, "Salt", "Enter salt", false, 40, false)
+	pbkdf2_salt_box = salt_box
+	local bottom_row = make("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 0, 0, 88),
+		Size = UDim2.new(1, 0, 0, 78),
+	}, pbkdf2_fields)
+	local iterations_field = make("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(0.5, -6, 1, 0),
+	}, bottom_row)
+	local _, iterations_box = create_field(iterations_field, "Iterations", "1000", false, 40, false)
+	iterations_box.Text = "1000"
+	pbkdf2_iterations_box = iterations_box
+	local length_field = make("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0.5, 6, 0, 0),
+		Size = UDim2.new(0.5, -6, 1, 0),
+	}, bottom_row)
+	local _, length_box = create_field(length_field, "Derived key length", "32", false, 40, false)
+	length_box.Text = "32"
+	pbkdf2_length_box = length_box
+	local pbkdf2_action_row = make("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 0, 1, -36),
+		Size = UDim2.new(1, 0, 0, 36),
+	}, pbkdf2_workspace)
+	pbkdf2_generate_button = create_action_button(pbkdf2_action_row, "Derive Key", true, UDim2.new(0, 164, 1, 0))
+	pbkdf2_clear_button = create_action_button(pbkdf2_action_row, "Clear", false, UDim2.new(0, 110, 1, 0))
+	pbkdf2_clear_button.Position = UDim2.new(0, 174, 0, 0)
+end
 
-sco_reg_workspace = create_section_frame(workspace, 6, 256)
-local sco_reg_fields = make("Frame", {
-	BackgroundTransparency = 1,
-	Size = UDim2.new(1, 0, 0, 190),
-}, sco_reg_workspace)
-local sco_reg_top_row = make("Frame", {
-	BackgroundTransparency = 1,
-	Size = UDim2.new(1, 0, 0, 78),
-}, sco_reg_fields)
-local reg_serial_field = make("Frame", {
-	BackgroundTransparency = 1,
-	Size = UDim2.new(0.5, -6, 1, 0),
-}, sco_reg_top_row)
-local _, reg_serial_box = create_field(reg_serial_field, "Serial number", "SCO123456", false, 40, false)
-sco_reg_serial_box = reg_serial_box
-local host_id_field = make("Frame", {
-	BackgroundTransparency = 1,
-	Position = UDim2.new(0.5, 6, 0, 0),
-	Size = UDim2.new(0.5, -6, 1, 0),
-}, sco_reg_top_row)
-local _, host_id_box = create_field(host_id_field, "Host ID", "orxrrwjwxz", false, 40, false)
-sco_host_id_box = host_id_box
-local reglock_field = make("Frame", {
-	BackgroundTransparency = 1,
-	Position = UDim2.new(0, 0, 0, 88),
-	Size = UDim2.new(1, 0, 0, 78),
-}, sco_reg_fields)
-local _, reglock_box = create_field(reglock_field, "Registration lock", "Optional: oSCO123456;u1234567890;m......", false, 40, false)
-sco_reglock_box = reglock_box
-make("TextLabel", {
-	BackgroundTransparency = 1,
-	Font = Enum.Font.GothamMedium,
-	Position = UDim2.new(0, 0, 0, 168),
-	Size = UDim2.new(1, 0, 0, 20),
-	Text = "Paste a reglock or provide serial number plus host ID.",
-	TextColor3 = palette.subtle,
-	TextSize = 11,
-	TextXAlignment = Enum.TextXAlignment.Left,
-}, sco_reg_fields)
-local sco_reg_action_row = make("Frame", {
-	BackgroundTransparency = 1,
-	Position = UDim2.new(0, 0, 1, -36),
-	Size = UDim2.new(1, 0, 0, 36),
-}, sco_reg_workspace)
-local sco_reg_generate_button = create_action_button(sco_reg_action_row, "Generate Key", true, UDim2.new(0, 164, 1, 0))
-local sco_reg_clear_button = create_action_button(sco_reg_action_row, "Clear", false, UDim2.new(0, 110, 1, 0))
-sco_reg_clear_button.Position = UDim2.new(0, 174, 0, 0)
+do
+	sco_snak_workspace = create_section_frame(workspace, 6, 238)
+	local sco_snak_fields = make("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 172),
+	}, sco_snak_workspace)
+	local sco_version_row = make("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 78),
+	}, sco_snak_fields)
+	local product_field = make("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1 / 3, -8, 1, 0),
+	}, sco_version_row)
+	local _, product_id_box = create_field(product_field, "Product ID", "203", false, 40, false)
+	sco_product_id_box = product_id_box
+	local major_field = make("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(1 / 3, 4, 0, 0),
+		Size = UDim2.new(1 / 3, -8, 1, 0),
+	}, sco_version_row)
+	local _, major_box = create_field(major_field, "Major", "71", false, 40, false)
+	sco_major_box = major_box
+	local minor_field = make("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(2 / 3, 8, 0, 0),
+		Size = UDim2.new(1 / 3, -8, 1, 0),
+	}, sco_version_row)
+	local _, minor_box = create_field(minor_field, "Minor", "4", false, 40, false)
+	sco_minor_box = minor_box
+	local license_field = make("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 0, 0, 88),
+		Size = UDim2.new(1, 0, 0, 78),
+	}, sco_snak_fields)
+	local _, license_box = create_field(license_field, "License data", "Optional: c4;u100", false, 40, false)
+	sco_license_box = license_box
+	local sco_snak_action_row = make("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 0, 1, -36),
+		Size = UDim2.new(1, 0, 0, 36),
+	}, sco_snak_workspace)
+	sco_snak_generate_button = create_action_button(sco_snak_action_row, "Generate SNAK", true, UDim2.new(0, 164, 1, 0))
+	sco_snak_clear_button = create_action_button(sco_snak_action_row, "Clear", false, UDim2.new(0, 110, 1, 0))
+	sco_snak_clear_button.Position = UDim2.new(0, 174, 0, 0)
+end
 
-create_divider(workspace, 7)
+do
+	sco_reg_workspace = create_section_frame(workspace, 7, 256)
+	local sco_reg_fields = make("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 190),
+	}, sco_reg_workspace)
+	local sco_reg_top_row = make("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 78),
+	}, sco_reg_fields)
+	local reg_serial_field = make("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(0.5, -6, 1, 0),
+	}, sco_reg_top_row)
+	local _, reg_serial_box = create_field(reg_serial_field, "Serial number", "SCO123456", false, 40, false)
+	sco_reg_serial_box = reg_serial_box
+	local host_id_field = make("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0.5, 6, 0, 0),
+		Size = UDim2.new(0.5, -6, 1, 0),
+	}, sco_reg_top_row)
+	local _, host_id_box = create_field(host_id_field, "Host ID", "orxrrwjwxz", false, 40, false)
+	sco_host_id_box = host_id_box
+	local reglock_field = make("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 0, 0, 88),
+		Size = UDim2.new(1, 0, 0, 78),
+	}, sco_reg_fields)
+	local _, reglock_box = create_field(reglock_field, "Registration lock", "Optional: oSCO123456;u1234567890;m......", false, 40, false)
+	sco_reglock_box = reglock_box
+	make("TextLabel", {
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamMedium,
+		Position = UDim2.new(0, 0, 0, 168),
+		Size = UDim2.new(1, 0, 0, 20),
+		Text = "Paste a reglock or provide serial number plus host ID.",
+		TextColor3 = palette.subtle,
+		TextSize = 11,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, sco_reg_fields)
+	local sco_reg_action_row = make("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 0, 1, -36),
+		Size = UDim2.new(1, 0, 0, 36),
+	}, sco_reg_workspace)
+	sco_reg_generate_button = create_action_button(sco_reg_action_row, "Generate Key", true, UDim2.new(0, 164, 1, 0))
+	sco_reg_clear_button = create_action_button(sco_reg_action_row, "Clear", false, UDim2.new(0, 110, 1, 0))
+	sco_reg_clear_button.Position = UDim2.new(0, 174, 0, 0)
+end
 
-local result_panel = create_section_frame(workspace, 8, 210)
-result_title = make("TextLabel", {
-	BackgroundTransparency = 1,
-	Font = Enum.Font.GothamSemibold,
-	Size = UDim2.new(1, 0, 0, 18),
-	Text = "Result",
-	TextColor3 = palette.text,
-	TextSize = 14,
-	TextXAlignment = Enum.TextXAlignment.Left,
-}, result_panel)
-result_meta_label = make("TextLabel", {
-	BackgroundTransparency = 1,
-	Font = Enum.Font.GothamMedium,
-	Position = UDim2.new(0, 0, 0, 20),
-	Size = UDim2.new(1, 0, 0, 18),
-	Text = "",
-	TextColor3 = palette.subtle,
-	TextSize = 11,
-	TextXAlignment = Enum.TextXAlignment.Left,
-}, result_panel)
-result_box = make("TextBox", {
-	BackgroundColor3 = palette.surface,
-	BorderSizePixel = 0,
-	ClearTextOnFocus = false,
-	Font = Enum.Font.Code,
-	Position = UDim2.new(0, 0, 0, 44),
-	Selectable = true,
-	Size = UDim2.new(1, 0, 0, 128),
-	Text = "The output will appear here",
-	TextColor3 = palette.subtle,
-	TextEditable = false,
-	TextSize = 14,
-	TextWrapped = true,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	TextYAlignment = Enum.TextYAlignment.Top,
-}, result_panel)
-add_corner(result_box, 3)
-add_stroke(result_box, palette.border, 1, 0.72)
-make("UIPadding", {
-	PaddingBottom = UDim.new(0, 12),
-	PaddingLeft = UDim.new(0, 12),
-	PaddingRight = UDim.new(0, 12),
-	PaddingTop = UDim.new(0, 10),
-}, result_box)
-local status_row = make("Frame", {
-	BackgroundTransparency = 1,
-	Position = UDim2.new(0, 0, 1, -18),
-	Size = UDim2.new(1, 0, 0, 18),
-}, result_panel)
-status_dot = make("Frame", {
-	AnchorPoint = Vector2.new(0, 0.5),
-	BackgroundColor3 = palette.success,
-	BorderSizePixel = 0,
-	Position = UDim2.new(0, 0, 0.5, 0),
-	Size = UDim2.new(0, 8, 0, 8),
-}, status_row)
-add_corner(status_dot, 999)
-status_label = make("TextLabel", {
-	BackgroundTransparency = 1,
-	Font = Enum.Font.GothamMedium,
-	Position = UDim2.new(0, 16, 0, 0),
-	Size = UDim2.new(1, -16, 1, 0),
-	Text = "Ready",
-	TextColor3 = palette.success,
-	TextSize = 11,
-	TextXAlignment = Enum.TextXAlignment.Left,
-}, status_row)
+create_divider(workspace, 8)
+
+do
+	local result_panel = create_section_frame(workspace, 9, 210)
+	result_title = make("TextLabel", {
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamSemibold,
+		Size = UDim2.new(1, 0, 0, 18),
+		Text = "Result",
+		TextColor3 = palette.text,
+		TextSize = 14,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, result_panel)
+	result_meta_label = make("TextLabel", {
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamMedium,
+		Position = UDim2.new(0, 0, 0, 20),
+		Size = UDim2.new(1, 0, 0, 18),
+		Text = "",
+		TextColor3 = palette.subtle,
+		TextSize = 11,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, result_panel)
+	result_box = make("TextBox", {
+		BackgroundColor3 = palette.surface,
+		BorderSizePixel = 0,
+		ClearTextOnFocus = false,
+		Font = Enum.Font.Code,
+		Position = UDim2.new(0, 0, 0, 44),
+		Selectable = true,
+		Size = UDim2.new(1, 0, 0, 128),
+		Text = "The output will appear here",
+		TextColor3 = palette.subtle,
+		TextEditable = false,
+		TextSize = 14,
+		TextWrapped = true,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+	}, result_panel)
+	add_corner(result_box, 3)
+	add_stroke(result_box, palette.border, 1, 0.72)
+	make("UIPadding", {
+		PaddingBottom = UDim.new(0, 12),
+		PaddingLeft = UDim.new(0, 12),
+		PaddingRight = UDim.new(0, 12),
+		PaddingTop = UDim.new(0, 10),
+	}, result_box)
+	local status_row = make("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 0, 1, -18),
+		Size = UDim2.new(1, 0, 0, 18),
+	}, result_panel)
+	status_dot = make("Frame", {
+		AnchorPoint = Vector2.new(0, 0.5),
+		BackgroundColor3 = palette.success,
+		BorderSizePixel = 0,
+		Position = UDim2.new(0, 0, 0.5, 0),
+		Size = UDim2.new(0, 8, 0, 8),
+	}, status_row)
+	add_corner(status_dot, 999)
+	status_label = make("TextLabel", {
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamMedium,
+		Position = UDim2.new(0, 16, 0, 0),
+		Size = UDim2.new(1, -16, 1, 0),
+		Text = "Ready",
+		TextColor3 = palette.success,
+		TextSize = 11,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, status_row)
+end
 
 local RESULT_PLACEHOLDER = "The output will appear here"
 
@@ -924,6 +1000,24 @@ local mode_configs
 
 local function get_default_pbkdf2_length()
 	return current_pbkdf2_digest == "sha512" and "64" or "32"
+end
+
+local function get_current_digest_key()
+	if current_mode == "hmac" then
+		return current_hmac_digest
+	end
+	if current_mode == "pbkdf2" then
+		return current_pbkdf2_digest
+	end
+	return nil
+end
+
+local function mode_allows_digest(config, digest_key)
+	local allowed_digests = config.allowed_digests
+	if type(allowed_digests) ~= "table" then
+		return false
+	end
+	return table.find(allowed_digests, digest_key) ~= nil
 end
 
 local function get_current_mode_config()
@@ -1016,6 +1110,31 @@ local function run_hash_mode()
 	end
 
 	show_success(hash_value, "Hash generated")
+end
+
+local function run_hmac_mode()
+	local key_text = hmac_key_box.Text or ""
+	local message_text = hmac_message_box.Text or ""
+	if key_text == "" then
+		show_error("Please enter an HMAC key.", "Key required")
+		return
+	end
+
+	local digest_module = hmac_digest_modules[current_hmac_digest]
+	if not digest_module then
+		show_error("HMAC digest selection is invalid.", "Digest error")
+		return
+	end
+
+	local ok, mac_value = pcall(function()
+		return hmac_module.hmac_hex(key_text, message_text, digest_module)
+	end)
+	if not ok then
+		show_error("HMAC failed: " .. tostring(mac_value), "HMAC error")
+		return
+	end
+
+	show_success(mac_value, "MAC ready")
 end
 
 local function run_pbkdf2_mode()
@@ -1117,6 +1236,38 @@ mode_configs = {
 		end,
 		run = run_hash_mode,
 	},
+	hmac = {
+		title = "HMAC",
+		subtitle = "Generate a keyed message authentication code from a secret key and message using the selected digest.",
+		output_title = "MAC",
+		ready_text = "HMAC ready",
+		summary_mode = "HMAC",
+		workspace = hmac_workspace,
+		show_algorithm_section = false,
+		show_backend_section = false,
+		show_digest_section = true,
+		allowed_digests = digest_order,
+		get_result_meta = function()
+			local base = "HMAC-" .. get_digest_label(current_hmac_digest)
+			if current_result_value ~= "" then
+				return base .. "  |  " .. tostring(#current_result_value) .. " chars"
+			end
+			return base
+		end,
+		get_summary_target = function()
+			return get_digest_label(current_hmac_digest)
+		end,
+		get_summary_engine = function()
+			return "Custom HMAC"
+		end,
+		apply_defaults = function()
+		end,
+		clear_fields = function()
+			hmac_key_box.Text = ""
+			hmac_message_box.Text = ""
+		end,
+		run = run_hmac_mode,
+	},
 	pbkdf2 = {
 		title = "PBKDF2",
 		subtitle = "Derive a key from a password, salt, and iteration count using HMAC-based PBKDF2.",
@@ -1127,6 +1278,7 @@ mode_configs = {
 		show_algorithm_section = false,
 		show_backend_section = false,
 		show_digest_section = true,
+		allowed_digests = {"sha256", "sha512"},
 		get_result_meta = function()
 			local iterations_text = pbkdf2_iterations_box and pbkdf2_iterations_box.Text or "1000"
 			local base = "PBKDF2-HMAC-" .. get_digest_label(current_pbkdf2_digest) .. "  |  " .. iterations_text .. " iterations"
@@ -1257,8 +1409,9 @@ local function refresh_selectors()
 		style_row(row, algorithm_key == current_algorithm, true)
 	end
 
+	local current_digest_key = get_current_digest_key()
 	for digest_key, row in pairs(digest_rows) do
-		style_row(row, digest_key == current_pbkdf2_digest, true)
+		style_row(row, digest_key == current_digest_key, true)
 	end
 
 	for backend_key, row in pairs(backend_rows) do
@@ -1276,6 +1429,9 @@ local function refresh_visibility()
 	sidebar_algorithm_section.Visible = config.show_algorithm_section
 	sidebar_backend_section.Visible = config.show_backend_section
 	sidebar_digest_section.Visible = config.show_digest_section
+	for digest_key, row in pairs(digest_rows) do
+		row.Visible = config.show_digest_section and mode_allows_digest(config, digest_key)
+	end
 	native_row.Visible = native_supported
 	backend_note_label.Visible = native_supported
 end
@@ -1344,6 +1500,24 @@ local function apply_pbkdf2_digest(digest_key)
 	sync_shell()
 end
 
+local function apply_hmac_digest(digest_key)
+	if hmac_digest_modules[digest_key] == nil then
+		return
+	end
+
+	current_hmac_digest = digest_key
+	clear_output("Digest selected", palette.success)
+	sync_shell()
+end
+
+local function apply_digest(digest_key)
+	if current_mode == "hmac" then
+		apply_hmac_digest(digest_key)
+	elseif current_mode == "pbkdf2" then
+		apply_pbkdf2_digest(digest_key)
+	end
+end
+
 local function generate_hash()
 	get_current_mode_config().run()
 end
@@ -1372,11 +1546,12 @@ end
 
 bind_click_map(mode_rows, apply_mode)
 bind_click_map(algorithm_rows, apply_algorithm)
-bind_click_map(digest_rows, apply_pbkdf2_digest)
+bind_click_map(digest_rows, apply_digest)
 bind_click_map(backend_rows, apply_backend_mode)
 
 for _, button in ipairs({
 	hash_generate_button,
+	hmac_generate_button,
 	pbkdf2_generate_button,
 	sco_snak_generate_button,
 	sco_reg_generate_button,
@@ -1386,6 +1561,7 @@ end
 
 for _, button in ipairs({
 	hash_clear_button,
+	hmac_clear_button,
 	pbkdf2_clear_button,
 	sco_snak_clear_button,
 	sco_reg_clear_button,
@@ -1394,6 +1570,8 @@ for _, button in ipairs({
 end
 
 bind_submit_on_enter(hash_input_box, "hash")
+bind_submit_on_enter(hmac_key_box, "hmac")
+bind_submit_on_enter(hmac_message_box, "hmac")
 bind_submit_on_enter(pbkdf2_password_box, "pbkdf2")
 bind_submit_on_enter(pbkdf2_salt_box, "pbkdf2")
 bind_submit_on_enter(pbkdf2_iterations_box, "pbkdf2")

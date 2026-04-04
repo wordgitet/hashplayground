@@ -4,7 +4,7 @@ Hash Playground
 OVERVIEW
 ========
 Hash Playground is an open-source Roblox project for experimenting with
-hashes, checksums, and key derivation.
+hashes, checksums, message authentication codes, and key derivation.
 
 It started as a Roblox "game" and ended up closer to a desktop-style
 utility app. The project is built with Luau and uses a GTK-inspired
@@ -26,6 +26,7 @@ FEATURES
 - CRC-16
 - CRC-24
 - CRC-32
+- HMAC with SHA-1, SHA-256, and SHA-512
 - PBKDF2 with SHA-256 and SHA-512
 - SCO serial, activation, license, and registration key helpers
 - Custom and native backend support where available
@@ -51,6 +52,10 @@ To work on the project locally:
   rojo serve
 
 Then connect to the Rojo plugin in Roblox Studio and sync the project.
+
+For lightweight host-side HMAC verification:
+
+  bash scripts/verify_hmac_vectors.sh
 
 NOTES
 =====

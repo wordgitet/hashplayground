@@ -101,7 +101,7 @@ commits and merge commits.
 Format:
 
 ```text
-subsystem: imperative summary
+subsystem: Imperative summary
 
 Explain what changed and why.
 
@@ -132,7 +132,7 @@ Rules:
 Example:
 
 ```text
-tests: import yash POSIX suite
+tests: Import yash POSIX suite
 
 Import the POSIX-facing yash tests under test-posix/yash and add a local
 runner that requires yash from PATH.
