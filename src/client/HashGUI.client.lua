@@ -1302,7 +1302,8 @@ end
 local function refresh_hash_workspace_layout()
 	local supports_output_length = current_mode == "hash" and hash_algorithm_supports_output_length(current_algorithm)
 	local supports_cshake = current_mode == "hash" and is_cshake_algorithm(current_algorithm)
-	local current_y = 126
+	local options_top = 126
+	local current_y = 0
 
 	hash_output_length_field.Visible = supports_output_length
 	hash_function_name_field.Visible = supports_cshake
@@ -1320,8 +1321,8 @@ local function refresh_hash_workspace_layout()
 		current_y += 66
 	end
 
-	hash_action_row.Position = UDim2.new(0, 0, 0, current_y)
-	hash_workspace.Size = UDim2.new(1, 0, 0, current_y + 36)
+	hash_action_row.Position = UDim2.new(0, 0, 0, options_top + current_y)
+	hash_workspace.Size = UDim2.new(1, 0, 0, options_top + current_y + 36)
 end
 
 local function get_current_mode_config()
